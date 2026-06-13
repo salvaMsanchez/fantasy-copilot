@@ -1,0 +1,33 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Entornos virtuales
+.env
+.venv
+venv/
+
+# Datos sensibles
+*.json
+!README.md
+
+# ChromaDB
+chroma_db/
+
+# IDEs
+.vscode/
+.idea/
