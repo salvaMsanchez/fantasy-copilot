@@ -25,6 +25,11 @@ ARAMBARRI = {
     "posicion": "Pivote",
     "equipo": "Getafe CF",
 }
+LISTA_DE_LA_TEMPORADA = [
+    {**BELLINGHAM, "equipos": ["Real Madrid"]},
+    {**MBAPPE, "equipos": ["Real Madrid"]},
+    {**ARAMBARRI, "equipos": ["Getafe CF"]},
+]
 
 PLANTILLA_REAL_MADRID = """
 <table class="items"><tbody>
@@ -197,7 +202,7 @@ def test_devuelve_los_jugadores_de_todos_los_equipos_de_la_liga(tmp_path):
 
     jugadores = obtener(2026, tmp_path / "datos", web)
 
-    assert jugadores == [BELLINGHAM, MBAPPE, ARAMBARRI]
+    assert jugadores == LISTA_DE_LA_TEMPORADA
 
 
 @pytest.mark.parametrize("temporada", [2025, 2026])
@@ -215,7 +220,7 @@ def test_guarda_la_lista_en_el_fichero_de_la_temporada(tmp_path):
     obtener(2026, tmp_path / "datos", web)
 
     guardado = json.loads((tmp_path / "datos" / "jugadores_2026.json").read_text(encoding="utf-8"))
-    assert guardado == [BELLINGHAM, MBAPPE, ARAMBARRI]
+    assert guardado == LISTA_DE_LA_TEMPORADA
 
 
 def test_si_el_fichero_de_la_temporada_existe_devuelve_su_contenido_sin_peticiones(tmp_path):
@@ -319,3 +324,102 @@ def test_entre_la_peticion_de_un_equipo_y_la_del_siguiente_se_espera_un_segundo(
     segundo = pasos.index(("get", url_getafe(2026)))
     espera = sum(paso[1] for paso in pasos[primero:segundo] if paso[0] == "esperar")
     assert espera >= 1
+
+
+RUTAS_DE_EQUIPO = {
+    "FC Barcelona": "fc-barcelona/{}/verein/131",
+    "Girona FC": "girona-fc/{}/verein/12321",
+}
+RUTA_TER_STEGEN = "/marc-ter-stegen/profil/spieler/74857"
+FILA_TER_STEGEN = fila(RUTA_TER_STEGEN, "Marc ter Stegen", "Portero")
+
+
+def web_con_plantillas(temporada, plantillas):
+    """La página de la liga lista los equipos en el orden del diccionario `plantillas`."""
+    enlaces, paginas_web = [], {}
+    for equipo, html in plantillas.items():
+        ruta = f"{RUTAS_DE_EQUIPO[equipo]}/saison_id/{temporada}"
+        inicio = ruta.format("startseite")
+        enlaces.append(f'<tr><td class="hauptlink"><a href="/{inicio}">{equipo}</a></td></tr>')
+        paginas_web[f"{BASE}/{ruta.format('kader')}"] = html
+    paginas_web[url_liga(temporada)] = (
+        f'<table class="items"><tbody>{"".join(enlaces)}</tbody></table>'
+    )
+    return TransfermarktFalso(paginas_web)
+
+
+def test_un_jugador_en_dos_plantillas_aparece_una_sola_vez_con_sus_dos_equipos(tmp_path):
+    web = web_con_plantillas(
+        2025,
+        {"FC Barcelona": plantilla(FILA_TER_STEGEN), "Girona FC": plantilla(FILA_TER_STEGEN)},
+    )
+
+    jugadores = obtener(2025, tmp_path / "datos", web)
+
+    assert jugadores == [
+        {
+            "id": "74857",
+            "nombre": "Marc ter Stegen",
+            "posicion": "Portero",
+            "equipo": "FC Barcelona",
+            "equipos": ["FC Barcelona", "Girona FC"],
+        }
+    ]
+
+
+def test_los_equipos_de_un_jugador_siguen_el_orden_de_la_pagina_de_la_liga(tmp_path):
+    web = web_con_plantillas(
+        2025,
+        {"Girona FC": plantilla(FILA_TER_STEGEN), "FC Barcelona": plantilla(FILA_TER_STEGEN)},
+    )
+
+    jugadores = obtener(2025, tmp_path / "datos", web)
+
+    assert [(j["equipo"], j["equipos"]) for j in jugadores] == [
+        ("Girona FC", ["Girona FC", "FC Barcelona"])
+    ]
+
+
+def test_el_jugador_repetido_ocupa_el_lugar_de_su_primera_aparicion(tmp_path):
+    web = web_con_plantillas(
+        2025,
+        {
+            "FC Barcelona": plantilla(FILA_TER_STEGEN, fila("/cien/profil/spieler/100", "Cien")),
+            "Girona FC": plantilla(
+                fila("/doscientos/profil/spieler/200", "Doscientos"),
+                FILA_TER_STEGEN,
+                fila("/trescientos/profil/spieler/300", "Trescientos"),
+            ),
+        },
+    )
+
+    jugadores = obtener(2025, tmp_path / "datos", web)
+
+    assert [j["id"] for j in jugadores] == ["74857", "100", "200", "300"]
+
+
+def test_el_nombre_y_la_posicion_de_un_jugador_repetido_son_los_de_su_primera_plantilla(tmp_path):
+    web = web_con_plantillas(
+        2025,
+        {
+            "FC Barcelona": plantilla(FILA_TER_STEGEN),
+            "Girona FC": plantilla(fila(RUTA_TER_STEGEN, "M. ter Stegen", None)),
+        },
+    )
+
+    jugadores = obtener(2025, tmp_path / "datos", web)
+
+    assert [(j["nombre"], j["posicion"]) for j in jugadores] == [("Marc ter Stegen", "Portero")]
+
+
+def test_el_fichero_guarda_al_jugador_repetido_una_sola_vez_igual_que_la_lista_devuelta(tmp_path):
+    web = web_con_plantillas(
+        2025,
+        {"FC Barcelona": plantilla(FILA_TER_STEGEN), "Girona FC": plantilla(FILA_TER_STEGEN)},
+    )
+
+    jugadores = obtener(2025, tmp_path / "datos", web)
+
+    guardado = json.loads((tmp_path / "datos" / "jugadores_2025.json").read_text(encoding="utf-8"))
+    assert [j["id"] for j in guardado] == ["74857"]
+    assert guardado == jugadores

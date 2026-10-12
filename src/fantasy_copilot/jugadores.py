@@ -58,14 +58,16 @@ def obtener_jugadores(
     if not equipos:
         raise ErrorTransfermarkt("La página de LaLiga no contiene ningún equipo")
 
-    jugadores = []
+    por_id = {}
     for indice, (equipo, url_plantilla) in enumerate(equipos):
         if indice:
             esperar(_SEGUNDOS_ENTRE_EQUIPOS)
         plantilla = extraer_jugadores(_descargar(cliente, url_plantilla, equipo), equipo)
         if not plantilla:
             raise ErrorTransfermarkt(f"La página de {equipo} no contiene ningún jugador")
-        jugadores.extend(plantilla)
+        for jugador in plantilla:
+            por_id.setdefault(jugador["id"], {**jugador, "equipos": []})["equipos"].append(equipo)
+    jugadores = list(por_id.values())
 
     ruta.parent.mkdir(parents=True, exist_ok=True)
     ruta.write_text(json.dumps(jugadores, ensure_ascii=False, indent=2), encoding="utf-8")
