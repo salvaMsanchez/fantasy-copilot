@@ -9,7 +9,9 @@ description = "Recomienda alineaciones de LaLiga Fantasy a partir de transcripci
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "beautifulsoup4>=4.12",
     "python-dotenv>=1.0",
+    "requests>=2.31",
 ]
 
 [project.optional-dependencies]
