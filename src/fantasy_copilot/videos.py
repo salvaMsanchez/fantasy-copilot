@@ -78,5 +78,8 @@ def _videos_canal(
             publicados.append((elemento["publishedAt"], video))
 
         pagina = respuesta.get("nextPageToken")
-        if not pagina or all(elemento["publishedAt"][:10] < inicio for elemento in elementos):
+        anterior_a_la_temporada = elementos and all(
+            elemento["publishedAt"][:10] < inicio for elemento in elementos
+        )
+        if not pagina or anterior_a_la_temporada:
             return publicados

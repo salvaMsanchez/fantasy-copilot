@@ -220,6 +220,19 @@ def test_un_video_de_la_segunda_pagina_de_un_canal_se_devuelve():
     assert identificadores(obtener_videos(12, 2026, cliente=youtube)) == ["j12"]
 
 
+def test_tras_una_pagina_sin_videos_con_next_page_token_se_pide_la_siguiente():
+    youtube = YouTubeFalso(
+        {
+            "carrasco": [
+                [],
+                [video("j12", "Jornada 12", "2026-11-05T18:00:00Z")],
+            ]
+        }
+    )
+
+    assert identificadores(obtener_videos(12, 2026, cliente=youtube)) == ["j12"]
+
+
 def test_se_retrocede_mas_alla_de_una_pagina_entera_posterior_a_la_temporada():
     youtube = YouTubeFalso(
         {
