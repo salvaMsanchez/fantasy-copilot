@@ -78,6 +78,14 @@ def test_pedir_una_clave_vacia_da_error_con_el_nombre_de_la_variable(monkeypatch
         config.clave_openai
 
 
+def test_pedir_una_clave_con_solo_espacios_da_error_con_el_nombre_de_la_variable(monkeypatch):
+    monkeypatch.setenv("YOUTUBE_API_KEY", "   ")
+    config = cargar_configuracion()
+
+    with pytest.raises(ErrorConfiguracion, match="YOUTUBE_API_KEY"):
+        config.clave_youtube
+
+
 def test_sin_variables_de_proxy_no_hay_proxy():
     config = cargar_configuracion()
 
@@ -140,3 +148,29 @@ def test_el_texto_de_la_configuracion_no_contiene_secretos(monkeypatch):
 
     for valor in secretos.values():
         assert valor not in texto
+
+
+def test_los_atributos_de_la_configuracion_como_diccionario_no_contienen_secretos(monkeypatch):
+    secretos = {
+        "OPENAI_API_KEY": "sk-secreto-openai",
+        "YOUTUBE_API_KEY": "yt-secreto-youtube",
+        "WEBSHARE_PROXY_PASSWORD": "secreto-contrasena-proxy",
+    }
+    for variable, valor in secretos.items():
+        monkeypatch.setenv(variable, valor)
+    monkeypatch.setenv("WEBSHARE_PROXY_USERNAME", "usuario-prueba")
+
+    texto = str(vars(cargar_configuracion()))
+
+    for valor in secretos.values():
+        assert valor not in texto
+
+
+def test_el_texto_del_proxy_no_contiene_la_contrasena(monkeypatch):
+    monkeypatch.setenv("WEBSHARE_PROXY_USERNAME", "usuario-prueba")
+    monkeypatch.setenv("WEBSHARE_PROXY_PASSWORD", "secreto-contrasena-proxy")
+
+    proxy = cargar_configuracion().proxy
+    texto = f"{proxy!s} {proxy!r}"
+
+    assert "secreto-contrasena-proxy" not in texto
