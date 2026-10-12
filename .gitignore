@@ -21,9 +21,12 @@ build/
 .venv
 venv/
 
-# Datos sensibles
-*.json
-!README.md
+# Datos generados
+/datos/
+/transcripciones_*.json
+/insights_*.json
+/jugadores_laliga.json
+/nombres_eliminados.json
 
 # ChromaDB
 chroma_db/
