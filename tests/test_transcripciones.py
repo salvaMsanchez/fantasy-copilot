@@ -3,10 +3,10 @@ from dataclasses import dataclass
 
 import pytest
 import requests
-from youtube_transcript_api import NoTranscriptFound, TranscriptsDisabled
+from youtube_transcript_api import IpBlocked, NoTranscriptFound, TranscriptsDisabled
 from youtube_transcript_api.proxies import WebshareProxyConfig
 
-from fantasy_copilot.configuracion import cargar_configuracion
+from fantasy_copilot.configuracion import Proxy, cargar_configuracion
 from fantasy_copilot.transcripciones import obtener_transcripciones
 
 
@@ -191,3 +191,124 @@ def test_con_proxy_configurado_la_descarga_usa_webshare_con_sus_credenciales(tmp
     assert {(type(p), p.proxy_username, p.proxy_password) for p in youtube.proxies} == {
         (WebshareProxyConfig, "usuario", "secreto")
     }
+
+
+def guardar(datos_dir, video_id, contenido):
+    fichero(datos_dir, video_id).parent.mkdir(parents=True, exist_ok=True)
+    fichero(datos_dir, video_id).write_text(contenido, encoding="utf-8")
+
+
+def leer(datos_dir, video_id):
+    return json.loads(fichero(datos_dir, video_id).read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize(
+    "fragmentos",
+    [[], [Fragmento("", 0.0, 2.5), Fragmento("   ", 2.5, 3.0)]],
+    ids=["cero_fragmentos", "fragmentos_en_blanco"],
+)
+def test_una_transcripcion_sin_texto_queda_no_disponible(tmp_path, fragmentos):
+    youtube = YouTubeFalso({"AT_UTIeNmtI": fragmentos})
+
+    [transcripcion] = obtener([video("AT_UTIeNmtI")], tmp_path, youtube)
+
+    assert isinstance(transcripcion["motivo"], str) and transcripcion["motivo"].strip()
+    assert {**transcripcion, "motivo": None} == {
+        **video("AT_UTIeNmtI"),
+        "estado": "no_disponible",
+        "motivo": None,
+        "transcripcion_cruda": None,
+        "fragmentos": [],
+    }
+
+
+def test_el_resultado_no_disponible_se_guarda_en_el_fichero_del_video(tmp_path):
+    youtube = YouTubeFalso({"AT_UTIeNmtI": TranscriptsDisabled("AT_UTIeNmtI")})
+
+    [transcripcion] = obtener([video("AT_UTIeNmtI")], tmp_path, youtube)
+
+    assert transcripcion["motivo"]
+    assert leer(tmp_path, "AT_UTIeNmtI") == {
+        **video("AT_UTIeNmtI"),
+        "estado": "no_disponible",
+        "motivo": transcripcion["motivo"],
+        "transcripcion_cruda": None,
+        "fragmentos": [],
+    }
+
+
+def test_el_fichero_de_un_video_no_disponible_pasa_a_ok_cuando_se_descarga_bien(tmp_path):
+    obtener(
+        [video("AT_UTIeNmtI")],
+        tmp_path,
+        YouTubeFalso({"AT_UTIeNmtI": TranscriptsDisabled("AT_UTIeNmtI")}),
+    )
+
+    obtener([video("AT_UTIeNmtI")], tmp_path, YouTubeFalso({"AT_UTIeNmtI": FRAGMENTOS}))
+
+    assert leer(tmp_path, "AT_UTIeNmtI") == {**video("AT_UTIeNmtI"), **TRANSCRIPCION_OK}
+
+
+def test_un_fichero_guardado_a_medias_se_descarga_de_nuevo_sin_afectar_a_los_demas(tmp_path):
+    guardar(tmp_path, "segundo", '{"canal": "carr')
+    youtube = YouTubeFalso({"primero": FRAGMENTOS, "segundo": FRAGMENTOS, "tercero": FRAGMENTOS})
+
+    transcripciones = obtener(
+        [video("primero"), video("segundo"), video("tercero")], tmp_path, youtube
+    )
+
+    assert [t["estado"] for t in transcripciones] == ["ok", "ok", "ok"]
+    assert "segundo" in youtube.consultados
+    assert leer(tmp_path, "segundo") == {**video("segundo"), **TRANSCRIPCION_OK}
+
+
+@pytest.mark.parametrize(
+    "contenido",
+    ["[]", '{"canal": "carrasco"}'],
+    ids=["lista_vacia", "objeto_sin_estado"],
+)
+def test_un_fichero_con_json_valido_que_no_es_un_resultado_se_descarga_de_nuevo(
+    tmp_path, contenido
+):
+    guardar(tmp_path, "AT_UTIeNmtI", contenido)
+    youtube = YouTubeFalso({"AT_UTIeNmtI": FRAGMENTOS})
+
+    obtener([video("AT_UTIeNmtI")], tmp_path, youtube)
+
+    assert youtube.consultados == ["AT_UTIeNmtI"]
+    assert leer(tmp_path, "AT_UTIeNmtI") == {**video("AT_UTIeNmtI"), **TRANSCRIPCION_OK}
+
+
+MENSAJE_LARGO = "\n".join(["fallo de red al pedir los subtitulos del video " + "x" * 52] * 10) + "."
+
+
+@pytest.mark.parametrize(
+    "fallo",
+    [IpBlocked("AT_UTIeNmtI"), requests.ConnectionError(MENSAJE_LARGO)],
+    ids=["peticion_bloqueada", "mensaje_de_mil_caracteres"],
+)
+def test_el_motivo_de_un_fallo_es_una_sola_linea_de_200_caracteres_como_maximo(tmp_path, fallo):
+    youtube = YouTubeFalso({"AT_UTIeNmtI": fallo})
+
+    [transcripcion] = obtener([video("AT_UTIeNmtI")], tmp_path, youtube)
+
+    motivo = transcripcion["motivo"]
+    assert motivo.strip()
+    assert "\n" not in motivo and "\r" not in motivo
+    assert len(motivo) <= 200
+
+
+def test_el_motivo_no_contiene_las_credenciales_del_proxy(tmp_path):
+    fallo = requests.exceptions.ProxyError(
+        "ProxyError: cannot connect to http://fantasy123-rotate:s3cr3to@p.webshare.io:80/"
+    )
+    youtube = YouTubeFalso({"AT_UTIeNmtI": fallo})
+
+    [transcripcion] = obtener(
+        [video("AT_UTIeNmtI")], tmp_path, youtube, proxy=Proxy("fantasy123", "s3cr3to")
+    )
+
+    guardado = fichero(tmp_path, "AT_UTIeNmtI").read_text(encoding="utf-8")
+    for texto in (transcripcion["motivo"], guardado):
+        assert "fantasy123" not in texto
+        assert "s3cr3to" not in texto
