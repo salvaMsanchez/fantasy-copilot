@@ -312,3 +312,78 @@ def test_el_motivo_no_contiene_las_credenciales_del_proxy(tmp_path):
     for texto in (transcripcion["motivo"], guardado):
         assert "fantasy123" not in texto
         assert "s3cr3to" not in texto
+
+
+def motivos_del_fallo(datos_dir, fallo, proxy):
+    """Devuelve el motivo devuelto y el guardado en el fichero del vídeo."""
+    youtube = YouTubeFalso({"AT_UTIeNmtI": fallo})
+
+    [transcripcion] = obtener([video("AT_UTIeNmtI")], datos_dir, youtube, proxy=proxy)
+
+    return [transcripcion["motivo"], leer(datos_dir, "AT_UTIeNmtI")["motivo"]]
+
+
+SIN_DIRECCION = (
+    Proxy("fantasy123", "s3cr3to"),
+    "407 Proxy Authentication Required for user fantasy123-rotate with password s3cr3to",
+)
+SIN_PROXY = (None, "cannot connect to http://otro:cl4ve@proxy.example.com:8080/")
+CODIFICADA = (
+    Proxy("fantasy123", "p@ss w/rd#1"),
+    "cannot connect to http://fantasy123-rotate:p%40ss%20w%2Frd%231@p.webshare.io:80/",
+)
+CON_ARROBA = (
+    Proxy("fantasy123", "s3@cr3to"),
+    "cannot connect to http://fantasy123-rotate:s3@cr3to@p.webshare.io:80/",
+)
+
+
+def test_el_motivo_conserva_completa_una_direccion_sin_credenciales(tmp_path):
+    direccion = "https://www.youtube.com/watch?v=AT_UTIeNmtI"
+    fallo = requests.exceptions.ConnectionError(f"could not retrieve {direccion}")
+
+    motivos = motivos_del_fallo(tmp_path, fallo, Proxy("fantasy123", "s3cr3to"))
+
+    for motivo in motivos:
+        assert direccion in motivo
+
+
+@pytest.mark.parametrize(
+    ("proxy", "mensaje", "prohibidos"),
+    [
+        (*SIN_DIRECCION, ["fantasy123", "s3cr3to"]),
+        (*SIN_PROXY, ["otro", "cl4ve"]),
+        (*CODIFICADA, ["fantasy123", "p%40ss%20w%2Frd%231"]),
+        (*CON_ARROBA, ["fantasy123", "s3@cr3to", "cr3to"]),
+    ],
+    ids=[
+        "credenciales_fuera_de_una_direccion",
+        "direccion_con_credenciales_sin_proxy_configurado",
+        "contrasena_codificada_en_la_direccion",
+        "contrasena_con_arroba",
+    ],
+)
+def test_el_motivo_no_contiene_credenciales(tmp_path, proxy, mensaje, prohibidos):
+    motivos = motivos_del_fallo(tmp_path, requests.exceptions.ProxyError(mensaje), proxy)
+
+    for motivo in motivos:
+        for prohibido in prohibidos:
+            assert prohibido not in motivo
+
+
+@pytest.mark.parametrize(
+    ("proxy", "mensaje", "servidor"),
+    [
+        (*SIN_PROXY, "proxy.example.com"),
+        (*CODIFICADA, "p.webshare.io"),
+        (*CON_ARROBA, "p.webshare.io"),
+    ],
+    ids=["sin_proxy_configurado", "contrasena_codificada", "contrasena_con_arroba"],
+)
+def test_el_motivo_conserva_el_servidor_de_una_direccion_con_credenciales(
+    tmp_path, proxy, mensaje, servidor
+):
+    motivos = motivos_del_fallo(tmp_path, requests.exceptions.ProxyError(mensaje), proxy)
+
+    for motivo in motivos:
+        assert servidor in motivo
