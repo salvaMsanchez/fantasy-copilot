@@ -15,6 +15,42 @@ CANDIDATOS_POR_MEDIDA = 5
 PARECIDO_MINIMO = 30
 MAXIMO_TOKENS_RESPUESTA = 500
 TEMPERATURA = 0
+MAXIMO_LLAMADAS_A_HERRAMIENTAS = 3
+PARECIDO_MINIMO_NOMBRE = 90
+PARECIDO_MINIMO_EQUIPO = 60
+
+
+def _herramienta(nombre: str, descripcion: str, argumento: str, descripcion_argumento: str) -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": nombre,
+            "description": descripcion,
+            "parameters": {
+                "type": "object",
+                "properties": {argumento: {"type": "string", "description": descripcion_argumento}},
+                "required": [argumento],
+            },
+        },
+    }
+
+
+HERRAMIENTAS = [
+    _herramienta(
+        "buscar_en_lista_oficial",
+        "Busca si un nombre existe exactamente o casi exactamente en la lista oficial de "
+        "jugadores de LaLiga.",
+        "nombre",
+        "Nombre a buscar en la lista oficial",
+    ),
+    _herramienta(
+        "buscar_por_equipo",
+        "Devuelve los jugadores de la lista oficial de un equipo. Úsala cuando la cita mencione "
+        "un equipo de LaLiga.",
+        "equipo",
+        "Nombre del equipo mencionado en la cita",
+    ),
+]
 
 ESQUEMA_JUGADOR = {
     "type": "json_schema",
@@ -42,11 +78,18 @@ Recibes el nombre transcrito, la cita en la que aparece y una lista de candidato
 oficial de LaLiga, cada uno con su identificador, su nombre y su equipo. Devuelve en `jugador_id` \
 el identificador del candidato al que se refiere el nombre, o null si ninguno encaja.
 
+HERRAMIENTAS DISPONIBLES:
+1. buscar_en_lista_oficial: úsala cuando no estés seguro de si el nombre existe tal cual.
+2. buscar_por_equipo: úsala cuando la cita mencione un equipo de LaLiga.
+Sus resultados también llevan el identificador de cada jugador, que puedes devolver aunque no \
+esté entre los candidatos.
+
 PROCESO:
 1. Analiza el nombre transcrito completo: ¿tiene forma de nombre o apellido de persona?
 2. Analiza los candidatos: ¿alguno contiene fonética o textualmente el nombre transcrito?
 3. Analiza la cita: ¿confirma o contradice algún candidato? Si menciona un equipo, compáralo \
 con el de cada candidato.
+4. Si tienes dudas, usa las herramientas: como máximo 3 llamadas en total.
 
 Devuelve null si:
 - El nombre transcrito completo no tiene forma de nombre o apellido de persona, aunque alguna \
@@ -138,14 +181,108 @@ def _consultar(nombre: str, cita: str, jugadores: list[dict], *, modelo: str, cl
         "cita": cita or "No disponible",
         "candidatos": _candidatos(nombre, jugadores),
     }
-    respuesta = cliente.chat.completions.create(
-        model=modelo,
-        messages=[
-            {"role": "system", "content": INSTRUCCIONES},
-            {"role": "user", "content": json.dumps(peticion, ensure_ascii=False, indent=2)},
-        ],
-        response_format=ESQUEMA_JUGADOR,
-        max_completion_tokens=MAXIMO_TOKENS_RESPUESTA,
-        temperature=TEMPERATURA,
+    mensajes = [
+        {"role": "system", "content": INSTRUCCIONES},
+        {"role": "user", "content": json.dumps(peticion, ensure_ascii=False, indent=2)},
+    ]
+    opciones = {
+        "model": modelo,
+        "response_format": ESQUEMA_JUGADOR,
+        "max_completion_tokens": MAXIMO_TOKENS_RESPUESTA,
+        "temperature": TEMPERATURA,
+    }
+
+    ejecutadas = 0
+    while ejecutadas < MAXIMO_LLAMADAS_A_HERRAMIENTAS:
+        respuesta = cliente.chat.completions.create(
+            messages=mensajes, tools=HERRAMIENTAS, **opciones
+        )
+        mensaje = respuesta.choices[0].message
+        if not mensaje.tool_calls:
+            return json.loads(mensaje.content)["jugador_id"]
+        mensajes.append(
+            {
+                "role": "assistant",
+                "content": mensaje.content,
+                "tool_calls": [
+                    {
+                        "id": llamada.id,
+                        "type": "function",
+                        "function": {
+                            "name": llamada.function.name,
+                            "arguments": llamada.function.arguments,
+                        },
+                    }
+                    for llamada in mensaje.tool_calls
+                ],
+            }
+        )
+        # Toda llamada pedida necesita su mensaje de respuesta, también las que ya no se ejecutan.
+        for llamada in mensaje.tool_calls:
+            if ejecutadas < MAXIMO_LLAMADAS_A_HERRAMIENTAS:
+                ejecutadas += 1
+                resultado = _ejecutar_herramienta(
+                    llamada.function.name, json.loads(llamada.function.arguments), jugadores
+                )
+            else:
+                resultado = "No ejecutada: se ha alcanzado el máximo de llamadas a herramientas."
+            mensajes.append({"role": "tool", "tool_call_id": llamada.id, "content": resultado})
+
+    mensajes.append(
+        {
+            "role": "user",
+            "content": "Ya no puedes usar herramientas. Con lo que has averiguado, devuelve "
+            "la respuesta final.",
+        }
     )
+    respuesta = cliente.chat.completions.create(messages=mensajes, **opciones)
     return json.loads(respuesta.choices[0].message.content)["jugador_id"]
+
+
+def _ejecutar_herramienta(nombre: str, argumentos: dict, jugadores: list[dict]) -> str:
+    if nombre == "buscar_en_lista_oficial":
+        return _buscar_en_lista_oficial(argumentos["nombre"], jugadores)
+    if nombre == "buscar_por_equipo":
+        return _buscar_por_equipo(argumentos["equipo"], jugadores)
+    return "Herramienta no reconocida."
+
+
+def _buscar_en_lista_oficial(nombre: str, jugadores: list[dict]) -> str:
+    encontrados = [jugador for jugador in jugadores if jugador["nombre"] == nombre]
+    if not encontrados:
+        parecido = process.extractOne(
+            nombre,
+            [jugador["nombre"] for jugador in jugadores],
+            scorer=fuzz.WRatio,
+            score_cutoff=PARECIDO_MINIMO_NOMBRE,
+        )
+        if parecido is None:
+            return "No hay ninguna coincidencia en la lista oficial."
+        encontrados = [jugadores[parecido[2]]]
+    return json.dumps(
+        [
+            {"id": jugador["id"], "nombre": jugador["nombre"], "equipo": jugador["equipo"]}
+            for jugador in encontrados
+        ],
+        ensure_ascii=False,
+    )
+
+
+def _buscar_por_equipo(equipo: str, jugadores: list[dict]) -> str:
+    equipos = sorted({nombre for jugador in jugadores for nombre in jugador["equipos"]})
+    parecido = process.extractOne(
+        equipo, equipos, scorer=fuzz.WRatio, score_cutoff=PARECIDO_MINIMO_EQUIPO
+    )
+    if parecido is None:
+        return "El equipo no se ha encontrado en la lista oficial."
+    return json.dumps(
+        {
+            "equipo": parecido[0],
+            "jugadores": [
+                {"id": jugador["id"], "nombre": jugador["nombre"]}
+                for jugador in jugadores
+                if parecido[0] in jugador["equipos"]
+            ],
+        },
+        ensure_ascii=False,
+    )

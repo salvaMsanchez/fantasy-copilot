@@ -74,7 +74,10 @@ def insight(jugador, quote="Es fijo esta jornada", **cambios):
 
 def elige(jugador_id):
     mensaje = SimpleNamespace(
-        role="assistant", content=json.dumps({"jugador_id": jugador_id}), refusal=None
+        role="assistant",
+        content=json.dumps({"jugador_id": jugador_id}),
+        refusal=None,
+        tool_calls=None,
     )
     return SimpleNamespace(choices=[SimpleNamespace(message=mensaje, finish_reason="stop")])
 
@@ -103,10 +106,12 @@ class OpenAIFalso:
         return respuesta
 
 
-def normalizar(insights, datos_dir, cliente, jornada=12, modelo="modelo-de-prueba"):
+def normalizar(
+    insights, datos_dir, cliente, jornada=12, modelo="modelo-de-prueba", oficiales=OFICIALES
+):
     return normalizar_insights(
         insights,
-        OFICIALES,
+        oficiales,
         jornada=jornada,
         temporada=2026,
         datos_dir=datos_dir,
@@ -290,3 +295,219 @@ def test_las_peticiones_usan_el_modelo_de_normalizacion_de_la_configuracion(tmp_
     )
 
     assert [peticion["modelo"] for peticion in openai_falso.peticiones] == ["modelo-y"]
+
+
+def oficial(identificador, nombre, posicion, *equipos):
+    """Un jugador con el formato de la lista oficial: `equipo` es el primero de `equipos`."""
+    return {
+        "id": identificador,
+        "nombre": nombre,
+        "posicion": posicion,
+        "equipo": equipos[0],
+        "equipos": list(equipos),
+    }
+
+
+PEPELU = oficial("500101", "Pepelu", "Pivote", "Valencia CF")
+GERARD_MORENO = oficial("500202", "Gerard Moreno", "Delantero centro", "Villarreal CF")
+MAYORAL = oficial("500303", "Borja Mayoral", "Delantero centro", "Getafe CF", "Real Betis Balompié")
+DJENE = oficial("500404", "Djené", "Defensa central", "Getafe CF")
+ISCO = oficial("500505", "Isco", "Mediapunta", "Real Betis Balompié")
+CON_EQUIPOS = [
+    oficial("411295", "Raphinha", "Extremo derecho", "FC Barcelona"),
+    PEPELU,
+    GERARD_MORENO,
+    MAYORAL,
+    DJENE,
+    ISCO,
+]
+
+MAXIMO_DE_PETICIONES = 10
+
+
+def pide(*llamadas):
+    """Respuesta del modelo que pide herramientas: cada llamada es (id, herramienta, argumentos)."""
+    tool_calls = [
+        SimpleNamespace(
+            id=identificador,
+            type="function",
+            function=SimpleNamespace(
+                name=herramienta, arguments=json.dumps(argumentos, ensure_ascii=False)
+            ),
+        )
+        for identificador, herramienta, argumentos in llamadas
+    ]
+    mensaje = SimpleNamespace(role="assistant", content=None, refusal=None, tool_calls=tool_calls)
+    return SimpleNamespace(choices=[SimpleNamespace(message=mensaje, finish_reason="tool_calls")])
+
+
+def ofrece_herramientas(peticion):
+    return bool(peticion.get("tools")) and peticion.get("tool_choice") != "none"
+
+
+class OpenAIConGuion:
+    """Hace de cliente de OpenAI y guarda cada petición tal como se envió.
+
+    `responder` recibe la petición y devuelve la respuesta. Corta con un error si la
+    conversación no termina.
+    """
+
+    def __init__(self, responder):
+        self.responder = responder
+        self.peticiones = []
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._crear))
+
+    def _crear(self, **peticion):
+        if len(self.peticiones) >= MAXIMO_DE_PETICIONES:
+            raise AssertionError("La resolución del nombre no termina")
+        self.peticiones.append({**peticion, "messages": list(peticion["messages"])})
+        return self.responder(peticion)
+
+    def resultados(self):
+        """Lo que el modelo ha recibido de cada herramienta, por identificador de llamada."""
+        recibido = {}
+        for peticion in self.peticiones:
+            for mensaje in peticion["messages"]:
+                if isinstance(mensaje, dict) and mensaje.get("role") == "tool":
+                    recibido[mensaje["tool_call_id"]] = mensaje["content"]
+        return recibido
+
+
+def en_orden(*respuestas):
+    """Devuelve las respuestas una a una y repite la última."""
+    pendientes = list(respuestas)
+
+    def responder(peticion):
+        return pendientes.pop(0) if len(pendientes) > 1 else pendientes[0]
+
+    return responder
+
+
+def pide_equipo_mientras_se_ofrezcan_herramientas(final):
+    turnos = iter(range(MAXIMO_DE_PETICIONES + 1))
+
+    def responder(peticion):
+        if not ofrece_herramientas(peticion):
+            return final
+        return pide((f"llamada_{next(turnos)}", "buscar_por_equipo", {"equipo": "Getafe"}))
+
+    return responder
+
+
+def resultado_de(herramienta, argumentos, tmp_path):
+    """Lo que recibe el modelo al pedir una sola herramienta mientras resuelve un nombre."""
+    openai_falso = OpenAIConGuion(
+        en_orden(pide(("llamada_1", herramienta, argumentos)), elige(None))
+    )
+    normalizar([insight("Rafiña")], tmp_path, openai_falso, oficiales=CON_EQUIPOS)
+    return openai_falso.resultados()["llamada_1"]
+
+
+def mencionados(texto, campo):
+    return {jugador[campo] for jugador in CON_EQUIPOS if jugador[campo] in texto}
+
+
+def test_si_el_modelo_no_pide_herramientas_el_nombre_se_resuelve_con_una_sola_peticion(tmp_path):
+    openai_falso = OpenAIConGuion(en_orden(elige("411295")))
+
+    resultado = normalizar([insight("Rafiña")], tmp_path, openai_falso, oficiales=CON_EQUIPOS)
+
+    assert [i["jugador_id"] for i in resultado["insights"]] == ["411295"]
+    assert len(openai_falso.peticiones) == 1
+
+
+def test_al_modelo_se_le_ofrecen_las_dos_herramientas_con_sus_argumentos(tmp_path):
+    openai_falso = OpenAIConGuion(en_orden(elige("411295")))
+
+    normalizar([insight("Rafiña")], tmp_path, openai_falso, oficiales=CON_EQUIPOS)
+
+    ofrecidas = {
+        herramienta["function"]["name"]: sorted(herramienta["function"]["parameters"]["properties"])
+        for herramienta in openai_falso.peticiones[0].get("tools") or []
+    }
+    assert ofrecidas == {"buscar_en_lista_oficial": ["nombre"], "buscar_por_equipo": ["equipo"]}
+
+
+def test_buscar_en_lista_oficial_devuelve_el_jugador_con_identificador_nombre_y_equipo(tmp_path):
+    recibido = resultado_de("buscar_en_lista_oficial", {"nombre": "Pepelu"}, tmp_path)
+
+    assert mencionados(recibido, "id") == {"500101"}
+    assert "Pepelu" in recibido and "Valencia CF" in recibido
+
+
+def test_buscar_en_lista_oficial_no_devuelve_ningun_jugador_si_el_nombre_no_se_parece(tmp_path):
+    recibido = resultado_de("buscar_en_lista_oficial", {"nombre": "75 kg para Moreno"}, tmp_path)
+
+    assert mencionados(recibido, "id") == set()
+    assert mencionados(recibido, "nombre") == set()
+
+
+def test_buscar_por_equipo_devuelve_identificador_y_nombre_de_los_jugadores_del_equipo(tmp_path):
+    recibido = resultado_de("buscar_por_equipo", {"equipo": "Getafe"}, tmp_path)
+
+    assert mencionados(recibido, "id") == {"500303", "500404"}
+    assert mencionados(recibido, "nombre") == {"Borja Mayoral", "Djené"}
+
+
+def test_buscar_por_equipo_incluye_al_jugador_que_figura_en_ese_equipo_sin_ser_el_primero(
+    tmp_path,
+):
+    recibido = resultado_de("buscar_por_equipo", {"equipo": "Betis"}, tmp_path)
+
+    assert mencionados(recibido, "id") == {"500303", "500505"}
+
+
+def test_buscar_por_equipo_no_devuelve_ningun_jugador_si_el_equipo_no_se_parece(tmp_path):
+    recibido = resultado_de("buscar_por_equipo", {"equipo": "Xyzzy"}, tmp_path)
+
+    assert mencionados(recibido, "id") == set()
+    assert mencionados(recibido, "nombre") == set()
+
+
+def test_tras_tres_llamadas_la_siguiente_peticion_ya_no_ofrece_herramientas(tmp_path):
+    openai_falso = OpenAIConGuion(pide_equipo_mientras_se_ofrezcan_herramientas(elige("411295")))
+
+    normalizar([insight("Rafiña")], tmp_path, openai_falso, oficiales=CON_EQUIPOS)
+
+    assert [ofrece_herramientas(p) for p in openai_falso.peticiones] == [True, True, True, False]
+
+
+def test_agotadas_las_llamadas_el_nombre_se_resuelve_con_la_respuesta_final(tmp_path):
+    openai_falso = OpenAIConGuion(pide_equipo_mientras_se_ofrezcan_herramientas(elige("411295")))
+
+    resultado = normalizar([insight("Rafiña")], tmp_path, openai_falso, oficiales=CON_EQUIPOS)
+
+    assert [i["jugador_id"] for i in resultado["insights"]] == ["411295"]
+    assert len(openai_falso.resultados()) == 3
+
+
+def dos_turnos_de_dos_llamadas():
+    return en_orden(
+        pide(
+            ("llamada_1", "buscar_en_lista_oficial", {"nombre": "Raphinha"}),
+            ("llamada_2", "buscar_en_lista_oficial", {"nombre": "Gerard Moreno"}),
+        ),
+        pide(
+            ("llamada_3", "buscar_en_lista_oficial", {"nombre": "Pepelu"}),
+            ("llamada_4", "buscar_por_equipo", {"equipo": "Getafe"}),
+        ),
+        elige("411295"),
+    )
+
+
+def test_con_dos_llamadas_por_turno_la_tercera_se_ejecuta(tmp_path):
+    openai_falso = OpenAIConGuion(dos_turnos_de_dos_llamadas())
+
+    normalizar([insight("Rafiña")], tmp_path, openai_falso, oficiales=CON_EQUIPOS)
+
+    assert mencionados(openai_falso.resultados()["llamada_3"], "id") == {"500101"}
+
+
+def test_con_dos_llamadas_por_turno_la_cuarta_no_se_ejecuta(tmp_path):
+    openai_falso = OpenAIConGuion(dos_turnos_de_dos_llamadas())
+
+    normalizar([insight("Rafiña")], tmp_path, openai_falso, oficiales=CON_EQUIPOS)
+
+    recibido = openai_falso.resultados()
+    assert {"llamada_1", "llamada_2", "llamada_3"} <= set(recibido)
+    assert mencionados(" ".join(recibido.values()), "id") == {"411295", "500202", "500101"}
