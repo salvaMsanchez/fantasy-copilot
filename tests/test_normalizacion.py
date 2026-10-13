@@ -3,6 +3,7 @@ import re
 from types import SimpleNamespace
 
 import openai
+import pytest
 
 from fantasy_copilot.configuracion import cargar_configuracion
 from fantasy_copilot.normalizacion import normalizar_insights
@@ -326,13 +327,19 @@ MAXIMO_DE_PETICIONES = 10
 
 
 def pide(*llamadas):
-    """Respuesta del modelo que pide herramientas: cada llamada es (id, herramienta, argumentos)."""
+    """Respuesta del modelo que pide herramientas: cada llamada es (id, herramienta, argumentos).
+
+    Si `argumentos` es un texto se envía tal cual, para poder mandar JSON mal formado.
+    """
     tool_calls = [
         SimpleNamespace(
             id=identificador,
             type="function",
             function=SimpleNamespace(
-                name=herramienta, arguments=json.dumps(argumentos, ensure_ascii=False)
+                name=herramienta,
+                arguments=argumentos
+                if isinstance(argumentos, str)
+                else json.dumps(argumentos, ensure_ascii=False),
             ),
         )
         for identificador, herramienta, argumentos in llamadas
@@ -394,17 +401,17 @@ def pide_equipo_mientras_se_ofrezcan_herramientas(final):
     return responder
 
 
-def resultado_de(herramienta, argumentos, tmp_path):
+def resultado_de(herramienta, argumentos, tmp_path, oficiales=CON_EQUIPOS):
     """Lo que recibe el modelo al pedir una sola herramienta mientras resuelve un nombre."""
     openai_falso = OpenAIConGuion(
         en_orden(pide(("llamada_1", herramienta, argumentos)), elige(None))
     )
-    normalizar([insight("Rafiña")], tmp_path, openai_falso, oficiales=CON_EQUIPOS)
+    normalizar([insight("Rafiña")], tmp_path, openai_falso, oficiales=oficiales)
     return openai_falso.resultados()["llamada_1"]
 
 
-def mencionados(texto, campo):
-    return {jugador[campo] for jugador in CON_EQUIPOS if jugador[campo] in texto}
+def mencionados(texto, campo, oficiales=CON_EQUIPOS):
+    return {jugador[campo] for jugador in oficiales if jugador[campo] in texto}
 
 
 def test_si_el_modelo_no_pide_herramientas_el_nombre_se_resuelve_con_una_sola_peticion(tmp_path):
@@ -511,3 +518,111 @@ def test_con_dos_llamadas_por_turno_la_cuarta_no_se_ejecuta(tmp_path):
     recibido = openai_falso.resultados()
     assert {"llamada_1", "llamada_2", "llamada_3"} <= set(recibido)
     assert mencionados(" ".join(recibido.values()), "id") == {"411295", "500202", "500101"}
+
+
+GRIEZMANN = oficial("600101", "Antoine Griezmann", "Delantero centro", "Atlético de Madrid")
+KOKE = oficial("600202", "Koke", "Mediocentro", "Atlético de Madrid")
+VINICIUS = oficial("600303", "Vinicius Junior", "Extremo izquierdo", "Real Madrid CF")
+VALVERDE = oficial("600404", "Federico Valverde", "Mediocentro", "Real Madrid CF")
+CON_MADRILENOS = [*CON_EQUIPOS, GRIEZMANN, KOKE, VINICIUS, VALVERDE]
+
+ARGUMENTOS_MAL_FORMADOS = pytest.mark.parametrize(
+    "argumentos",
+    ['{"equipo":', {"nombre": "Getafe"}],
+    ids=["json_no_valido", "falta_el_argumento_equipo"],
+)
+
+
+def pide_mal_formado_mientras_se_ofrezcan_herramientas(final):
+    turnos = iter(range(MAXIMO_DE_PETICIONES + 1))
+
+    def responder(peticion):
+        if not ofrece_herramientas(peticion):
+            return final
+        return pide((f"llamada_{next(turnos)}", "buscar_por_equipo", '{"equipo":'))
+
+    return responder
+
+
+@pytest.mark.parametrize("nombre", ["pepelu", "PEPELU"])
+def test_buscar_en_lista_oficial_encuentra_al_jugador_sin_distinguir_mayusculas(nombre, tmp_path):
+    recibido = resultado_de("buscar_en_lista_oficial", {"nombre": nombre}, tmp_path)
+
+    assert mencionados(recibido, "id") == {"500101"}
+    assert "Pepelu" in recibido and "Valencia CF" in recibido
+
+
+@pytest.mark.parametrize("equipo", ["GETAFE", "getafe"])
+def test_buscar_por_equipo_encuentra_el_equipo_sin_distinguir_mayusculas(equipo, tmp_path):
+    recibido = resultado_de("buscar_por_equipo", {"equipo": equipo}, tmp_path)
+
+    assert mencionados(recibido, "id") == {"500303", "500404"}
+    assert mencionados(recibido, "nombre") == {"Borja Mayoral", "Djené"}
+
+
+def test_buscar_por_equipo_devuelve_solo_el_equipo_mas_parecido_si_no_hay_empate(tmp_path):
+    recibido = resultado_de(
+        "buscar_por_equipo", {"equipo": "Real Madrid"}, tmp_path, oficiales=CON_MADRILENOS
+    )
+
+    assert mencionados(recibido, "id", CON_MADRILENOS) == {"600303", "600404"}
+
+
+def test_buscar_por_equipo_devuelve_los_jugadores_de_todos_los_equipos_empatados(tmp_path):
+    recibido = resultado_de(
+        "buscar_por_equipo", {"equipo": "Madrid"}, tmp_path, oficiales=CON_MADRILENOS
+    )
+
+    assert mencionados(recibido, "id", CON_MADRILENOS) == {"600101", "600202", "600303", "600404"}
+
+
+def test_buscar_por_equipo_dice_el_equipo_de_los_jugadores_cuando_hay_empate(tmp_path):
+    recibido = resultado_de(
+        "buscar_por_equipo", {"equipo": "Madrid"}, tmp_path, oficiales=CON_MADRILENOS
+    )
+
+    assert mencionados(recibido, "equipo", CON_MADRILENOS) == {
+        "Atlético de Madrid",
+        "Real Madrid CF",
+    }
+
+
+@ARGUMENTOS_MAL_FORMADOS
+def test_tras_una_llamada_con_argumentos_mal_formados_el_nombre_se_resuelve_con_la_respuesta_final(
+    argumentos, tmp_path
+):
+    openai_falso = OpenAIConGuion(
+        en_orden(pide(("llamada_1", "buscar_por_equipo", argumentos)), elige("411295"))
+    )
+
+    resultado = normalizar([insight("Rafiña")], tmp_path, openai_falso, oficiales=CON_EQUIPOS)
+
+    assert [i["jugador_id"] for i in resultado["insights"]] == ["411295"]
+    assert resultado["eliminados"] == []
+
+
+@ARGUMENTOS_MAL_FORMADOS
+def test_una_llamada_con_argumentos_mal_formados_recibe_un_resultado_sin_jugadores(
+    argumentos, tmp_path
+):
+    openai_falso = OpenAIConGuion(
+        en_orden(pide(("llamada_1", "buscar_por_equipo", argumentos)), elige("411295"))
+    )
+
+    normalizar([insight("Rafiña")], tmp_path, openai_falso, oficiales=CON_EQUIPOS)
+
+    recibido = openai_falso.resultados()
+    assert set(recibido) == {"llamada_1"}
+    assert recibido["llamada_1"].strip()
+    assert mencionados(recibido["llamada_1"], "id") == set()
+    assert mencionados(recibido["llamada_1"], "nombre") == set()
+
+
+def test_tres_llamadas_con_argumentos_mal_formados_agotan_el_tope_de_herramientas(tmp_path):
+    openai_falso = OpenAIConGuion(
+        pide_mal_formado_mientras_se_ofrezcan_herramientas(elige("411295"))
+    )
+
+    normalizar([insight("Rafiña")], tmp_path, openai_falso, oficiales=CON_EQUIPOS)
+
+    assert [ofrece_herramientas(p) for p in openai_falso.peticiones] == [True, True, True, False]

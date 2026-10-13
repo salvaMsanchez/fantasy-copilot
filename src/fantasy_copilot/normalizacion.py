@@ -222,7 +222,7 @@ def _consultar(nombre: str, cita: str, jugadores: list[dict], *, modelo: str, cl
             if ejecutadas < MAXIMO_LLAMADAS_A_HERRAMIENTAS:
                 ejecutadas += 1
                 resultado = _ejecutar_herramienta(
-                    llamada.function.name, json.loads(llamada.function.arguments), jugadores
+                    llamada.function.name, llamada.function.arguments, jugadores
                 )
             else:
                 resultado = "No ejecutada: se ha alcanzado el máximo de llamadas a herramientas."
@@ -239,21 +239,25 @@ def _consultar(nombre: str, cita: str, jugadores: list[dict], *, modelo: str, cl
     return json.loads(respuesta.choices[0].message.content)["jugador_id"]
 
 
-def _ejecutar_herramienta(nombre: str, argumentos: dict, jugadores: list[dict]) -> str:
-    if nombre == "buscar_en_lista_oficial":
-        return _buscar_en_lista_oficial(argumentos["nombre"], jugadores)
-    if nombre == "buscar_por_equipo":
-        return _buscar_por_equipo(argumentos["equipo"], jugadores)
+def _ejecutar_herramienta(nombre: str, argumentos: str, jugadores: list[dict]) -> str:
+    try:
+        if nombre == "buscar_en_lista_oficial":
+            return _buscar_en_lista_oficial(json.loads(argumentos)["nombre"], jugadores)
+        if nombre == "buscar_por_equipo":
+            return _buscar_por_equipo(json.loads(argumentos)["equipo"], jugadores)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return "Los argumentos de la llamada no son válidos."
     return "Herramienta no reconocida."
 
 
 def _buscar_en_lista_oficial(nombre: str, jugadores: list[dict]) -> str:
-    encontrados = [jugador for jugador in jugadores if jugador["nombre"] == nombre]
+    encontrados = [jugador for jugador in jugadores if jugador["nombre"].lower() == nombre.lower()]
     if not encontrados:
         parecido = process.extractOne(
             nombre,
             [jugador["nombre"] for jugador in jugadores],
             scorer=fuzz.WRatio,
+            processor=str.lower,
             score_cutoff=PARECIDO_MINIMO_NOMBRE,
         )
         if parecido is None:
@@ -269,20 +273,29 @@ def _buscar_en_lista_oficial(nombre: str, jugadores: list[dict]) -> str:
 
 
 def _buscar_por_equipo(equipo: str, jugadores: list[dict]) -> str:
-    equipos = sorted({nombre for jugador in jugadores for nombre in jugador["equipos"]})
-    parecido = process.extractOne(
-        equipo, equipos, scorer=fuzz.WRatio, score_cutoff=PARECIDO_MINIMO_EQUIPO
+    parecidos = process.extract(
+        equipo,
+        sorted({nombre for jugador in jugadores for nombre in jugador["equipos"]}),
+        scorer=fuzz.WRatio,
+        processor=str.lower,
+        score_cutoff=PARECIDO_MINIMO_EQUIPO,
+        limit=None,
     )
-    if parecido is None:
+    if not parecidos:
         return "El equipo no se ha encontrado en la lista oficial."
+    mayor = max(parecido for _, parecido, _ in parecidos)
     return json.dumps(
-        {
-            "equipo": parecido[0],
-            "jugadores": [
-                {"id": jugador["id"], "nombre": jugador["nombre"]}
-                for jugador in jugadores
-                if parecido[0] in jugador["equipos"]
-            ],
-        },
+        [
+            {
+                "equipo": nombre,
+                "jugadores": [
+                    {"id": jugador["id"], "nombre": jugador["nombre"]}
+                    for jugador in jugadores
+                    if nombre in jugador["equipos"]
+                ],
+            }
+            for nombre, parecido, _ in parecidos
+            if parecido == mayor
+        ],
         ensure_ascii=False,
     )
