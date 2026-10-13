@@ -441,3 +441,81 @@ def test_un_texto_fallido_se_vuelve_a_intentar_y_si_acierta_deja_de_estar_fallid
         "procesados": [{"video_id": VIDEO_ID, "chunk": 2}],
         "fallidos": [],
     }
+
+
+NO_ES_JSON = '{"insights": ['
+SIN_PROCESADOS_NI_FALLIDOS = '{"insights": []}'
+LISTA_SUELTA = "[]"
+
+DANADOS = pytest.mark.parametrize(
+    "contenido",
+    [NO_ES_JSON, SIN_PROCESADOS_NI_FALLIDOS, LISTA_SUELTA],
+    ids=["no_es_json", "sin_procesados_ni_fallidos", "lista_suelta"],
+)
+
+
+def guardar_crudo(datos_dir, contenido, jornada=12):
+    destino = fichero(datos_dir, jornada)
+    destino.parent.mkdir(parents=True)
+    destino.write_text(contenido, encoding="utf-8")
+    return destino
+
+
+def test_un_fichero_guardado_que_no_es_json_detiene_la_extraccion_con_un_error_que_dice_su_ruta(
+    tmp_path,
+):
+    ruta = guardar_crudo(tmp_path, NO_ES_JSON)
+    openai_falso = OpenAIFalso([("TEXTO_A", completa())])
+
+    with pytest.raises(Exception) as error:
+        extraer([texto("TEXTO_A")], tmp_path, openai_falso)
+
+    assert str(ruta) in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "contenido",
+    [SIN_PROCESADOS_NI_FALLIDOS, LISTA_SUELTA],
+    ids=["sin_procesados_ni_fallidos", "lista_suelta"],
+)
+def test_un_fichero_guardado_sin_el_formato_detiene_la_extraccion_con_un_error_que_dice_su_ruta(
+    tmp_path, contenido
+):
+    ruta = guardar_crudo(tmp_path, contenido)
+    openai_falso = OpenAIFalso([("TEXTO_A", completa())])
+
+    with pytest.raises(Exception) as error:
+        extraer([texto("TEXTO_A")], tmp_path, openai_falso)
+
+    assert str(ruta) in str(error.value)
+
+
+@DANADOS
+def test_con_un_fichero_guardado_danado_no_se_hace_ninguna_peticion_al_modelo(tmp_path, contenido):
+    guardar_crudo(tmp_path, contenido)
+    openai_falso = OpenAIFalso([("TEXTO_A", completa(INSIGHT_RAFINA))])
+
+    with pytest.raises(Exception):  # noqa: B017
+        extraer([texto("TEXTO_A")], tmp_path, openai_falso)
+
+    assert openai_falso.peticiones == []
+
+
+@DANADOS
+def test_un_fichero_guardado_danado_queda_exactamente_igual_que_estaba(tmp_path, contenido):
+    ruta = guardar_crudo(tmp_path, contenido)
+    openai_falso = OpenAIFalso([("TEXTO_A", completa(INSIGHT_RAFINA))])
+
+    with pytest.raises(Exception):  # noqa: B017
+        extraer([texto("TEXTO_A")], tmp_path, openai_falso)
+
+    assert ruta.read_bytes() == contenido.encode("utf-8")
+
+
+def test_al_terminar_en_la_carpeta_de_la_jornada_solo_queda_insights_json(tmp_path):
+    openai_falso = OpenAIFalso([("TEXTO_A", completa(INSIGHT_RAFINA)), ("TEXTO_B", error_api())])
+
+    extraer([texto("TEXTO_A", chunk=1), texto("TEXTO_B", chunk=2)], tmp_path, openai_falso)
+
+    carpeta = fichero(tmp_path).parent
+    assert [entrada.name for entrada in carpeta.iterdir()] == ["insights.json"]

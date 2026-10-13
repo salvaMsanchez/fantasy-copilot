@@ -80,6 +80,10 @@ CONTEXTO DEL VÍDEO:
 - Jornada: {jornada}"""
 
 
+class ErrorInsightsGuardados(Exception):
+    pass
+
+
 class _TextoFallido(Exception):
     def __init__(self, motivo: str) -> None:
         super().__init__(motivo)
@@ -124,13 +128,26 @@ def extraer_insights(
 
 
 def _leer_guardado(fichero: Path) -> dict:
+    claves = ("insights", "procesados", "fallidos")
     if not fichero.exists():
-        return {"insights": [], "procesados": [], "fallidos": []}
-    return json.loads(fichero.read_text(encoding="utf-8"))
+        return {clave: [] for clave in claves}
+    try:
+        guardado = json.loads(fichero.read_text(encoding="utf-8"))
+    except ValueError:
+        guardado = None
+    if not isinstance(guardado, dict) or any(
+        not isinstance(guardado.get(clave), list) for clave in claves
+    ):
+        raise ErrorInsightsGuardados(
+            f"El fichero {fichero} está dañado: corrígelo o bórralo para extraer de nuevo"
+        )
+    return guardado
 
 
 def _guardar(fichero: Path, resultado: dict) -> None:
-    fichero.write_text(json.dumps(resultado, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporal = fichero.with_name(fichero.name + ".tmp")
+    temporal.write_text(json.dumps(resultado, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporal.replace(fichero)
 
 
 def _extraer_de_texto(texto: dict, *, modelo: str, cliente, esperar) -> list[dict]:
