@@ -55,6 +55,42 @@ def test_la_limpieza_elimina_el_apostrofo_y_el_guion_sueltos(texto):
     assert limpiar_texto(texto) == "Pedri Lamine"
 
 
+def test_la_limpieza_conserva_el_signo_menos_pegado_a_una_cifra():
+    texto = "Suma -3 puntos y resta -2"
+
+    assert limpiar_texto(texto) == texto
+
+
+def test_la_limpieza_conserva_el_signo_menos_al_principio_del_texto():
+    assert limpiar_texto("-3 puntos") == "-3 puntos"
+
+
+def test_la_limpieza_elimina_el_guion_separado_de_la_cifra_por_un_espacio():
+    assert limpiar_texto("Pedri - 3 puntos") == "Pedri 3 puntos"
+
+
+@pytest.mark.parametrize(
+    ("texto", "limpio"),
+    [("-Pedri marca", "Pedri marca"), ("gol- de Pedri", "gol de Pedri")],
+)
+def test_la_limpieza_elimina_el_guion_pegado_a_una_palabra_por_un_solo_lado(texto, limpio):
+    assert limpiar_texto(texto) == limpio
+
+
+def test_la_limpieza_conserva_el_guion_entre_dos_cifras_y_entre_dos_letras():
+    texto = "ganó 3-1 con Sidi-Mohamed"
+
+    assert limpiar_texto(texto) == texto
+
+
+def test_la_limpieza_conserva_el_apostrofo_tipografico_dentro_de_una_palabra():
+    assert limpiar_texto("N’Diaye y D’Angelo") == "N’Diaye y D’Angelo"
+
+
+def test_la_limpieza_elimina_el_apostrofo_tipografico_suelto():
+    assert limpiar_texto("Pedri ’ Lamine") == "Pedri Lamine"
+
+
 def test_la_limpieza_conserva_tildes_enie_cifras_puntuacion_y_simbolos_de_cifras():
     texto = "¿Sube un 12%? Vale 7,5M€, +10 puntos; ¡ojo, Iñaki!"
 

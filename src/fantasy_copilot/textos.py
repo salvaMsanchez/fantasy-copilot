@@ -10,7 +10,8 @@ CAMPOS_VIDEO = ("canal", "video_id", "titulo", "fecha", "jornada", "temporada", 
 
 _ETIQUETA = re.compile(r"\[[^\]]*\]")
 _SIMBOLO = re.compile(r"[^\w\s.,;:¿?¡!%+€'’-]|_")
-_APOSTROFO_O_GUION_SUELTO = re.compile(r"(?<![^\W_])['’-]|['’-](?![^\W_])")
+# El guion sin letra ni cifra delante solo se conserva como signo menos de una cifra.
+_APOSTROFO_O_GUION_SUELTO = re.compile(r"(?<![^\W_])['’]|(?<![^\W_])-(?!\d)|['’-](?![^\W_])")
 
 
 def limpiar_texto(texto: str) -> str:
