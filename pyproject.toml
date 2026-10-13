@@ -12,6 +12,7 @@ dependencies = [
     "beautifulsoup4>=4.12",
     "openai>=1.45",
     "python-dotenv>=1.0",
+    "rapidfuzz>=3.0",
     "requests>=2.31",
     "youtube-transcript-api==1.2.4",
 ]
