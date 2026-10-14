@@ -1,0 +1,17 @@
+[
+  {"nombre": "Augusto Batalla", "posicion": "portero"},
+  {"nombre": "Andrei Ratiu", "posicion": "defensa"},
+  {"nombre": "Carlos Romero", "posicion": "defensa"},
+  {"nombre": "David Affengruber", "posicion": "defensa"},
+  {"nombre": "Javi Rodríguez", "posicion": "defensa"},
+  {"nombre": "Léo Pétrot", "posicion": "defensa"},
+  {"nombre": "Aleix Febas", "posicion": "centrocampista"},
+  {"nombre": "Hugo Álvarez", "posicion": "centrocampista"},
+  {"nombre": "Ilaix Moriba", "posicion": "centrocampista"},
+  {"nombre": "Omar Mascarell", "posicion": "centrocampista"},
+  {"nombre": "Óscar Trejo", "posicion": "centrocampista"},
+  {"nombre": "Alemao", "posicion": "delantero"},
+  {"nombre": "Fede Viñas", "posicion": "delantero"},
+  {"nombre": "Gonçalo Guedes", "posicion": "delantero"},
+  {"nombre": "Vedat Muriqi", "posicion": "delantero"}
+]
