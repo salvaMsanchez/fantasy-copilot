@@ -4,6 +4,7 @@ from pathlib import Path
 
 POSICIONES = ("portero", "defensa", "centrocampista", "delantero")
 MINIMO_JUGADORES = 11
+LETRAS_SIN_DESCOMPOSICION = str.maketrans("øłđ", "old")
 
 
 class ErrorPlantilla(Exception):
@@ -76,4 +77,4 @@ def _clave(nombre: str) -> str:
         for caracter in unicodedata.normalize("NFKD", nombre)
         if not unicodedata.combining(caracter)
     )
-    return " ".join(sin_marcas.casefold().split())
+    return " ".join(sin_marcas.casefold().translate(LETRAS_SIN_DESCOMPOSICION).split())
