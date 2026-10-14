@@ -11,12 +11,16 @@ requires-python = ">=3.11"
 dependencies = [
     "beautifulsoup4>=4.12",
     "chromadb>=1.0",
+    "google-api-python-client>=2.0",
     "openai>=1.45",
     "python-dotenv>=1.0",
     "rapidfuzz>=3.0",
     "requests>=2.31",
     "youtube-transcript-api==1.2.4",
 ]
+
+[project.scripts]
+fantasy-copilot = "fantasy_copilot.comandos:main"
 
 [project.optional-dependencies]
 dev = [
