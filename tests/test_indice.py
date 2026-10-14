@@ -26,6 +26,14 @@ OBLAK = {
     "posicion": "Portero",
     "nombre_transcrito": "Oblak",
 }
+PEDRI = {
+    "jugador": "Pedri",
+    "jugador_id": "683840",
+    "equipo": "FC Barcelona",
+    "posicion": "Mediocentro",
+    "nombre_transcrito": "Pedri",
+}
+RAPHINHA_SIN_POSICION = {**RAPHINHA, "posicion": None}
 
 # Vector fijo según el jugador que aparece en el texto. Lamine está más cerca de Raphinha
 # que Oblak, así que una pregunta sobre Raphinha los ordena Raphinha, Lamine, Oblak.
@@ -119,6 +127,46 @@ def test_los_metadatos_son_los_del_insight_normalizado():
         "temporada": 2026,
         "url": "https://youtube.com/watch?v=AT_UTIeNmtI",
     }
+
+
+def test_un_jugador_sin_posicion_se_recupera_con_los_11_metadatos_y_posicion_vacia():
+    indice = nuevo_indice()
+    indice.indexar([normalizado(RAPHINHA_SIN_POSICION)])
+
+    [resultado] = indice.consultar("Raphinha", jornada=12, temporada=2026)
+
+    assert resultado["metadatos"] == {
+        "jugador": "Raphinha",
+        "jugador_id": "411295",
+        "equipo": "FC Barcelona",
+        "posicion": "",
+        "accion": "alinear",
+        "confianza": 0.9,
+        "canal": "carrasco",
+        "fecha": "2026-11-05",
+        "jornada": 12,
+        "temporada": 2026,
+        "url": "https://youtube.com/watch?v=AT_UTIeNmtI",
+    }
+
+
+def test_el_texto_de_un_jugador_sin_posicion_empieza_por_su_nombre_sin_mencionar_none():
+    indice = nuevo_indice()
+    indice.indexar([normalizado(RAPHINHA_SIN_POSICION)])
+
+    [resultado] = indice.consultar("Raphinha", jornada=12, temporada=2026)
+
+    assert resultado["texto"].startswith("Raphinha.")
+    assert "None" not in resultado["texto"]
+
+
+def test_el_texto_de_un_jugador_con_posicion_empieza_por_su_nombre_y_su_posicion():
+    indice = nuevo_indice()
+    indice.indexar([normalizado(PEDRI)])
+
+    [resultado] = indice.consultar("Pedri", jornada=12, temporada=2026)
+
+    assert resultado["texto"].startswith("Pedri, Mediocentro.")
 
 
 def test_un_insight_sin_jugador_id_produce_un_error():
