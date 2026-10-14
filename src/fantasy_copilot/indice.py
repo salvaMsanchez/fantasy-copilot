@@ -82,7 +82,7 @@ def _texto(insight: dict) -> str:
     criterios = insight.get("criterios") or {}
     fuente = insight["fuente"]
     partes = [
-        f"{insight['jugador']}, {insight.get('posicion', '')}.",
+        ", ".join(filter(None, (insight["jugador"], insight.get("posicion")))) + ".",
         f"Recomendación: {insight['accion']}.",
         f"Razón: {insight.get('razon_corta', '')}.",
         *(
@@ -101,7 +101,7 @@ def _metadatos(insight: dict) -> dict:
         "jugador": insight["jugador"],
         "jugador_id": insight["jugador_id"],
         "equipo": insight["equipo"],
-        "posicion": insight["posicion"],
+        "posicion": insight["posicion"] or "",
         "accion": insight["accion"],
         "confianza": float(insight["confianza"]),
         "canal": fuente["canal"],
