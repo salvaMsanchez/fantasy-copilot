@@ -102,6 +102,10 @@ parcial de una sola palabra no basta.
 Es mejor eliminar un nombre que resolverlo mal."""
 
 
+class ErrorDecisionesGuardadas(Exception):
+    pass
+
+
 def normalizar_insights(
     insights: list[dict],
     jugadores: list[dict],
@@ -112,6 +116,17 @@ def normalizar_insights(
     modelo: str,
     cliente,
 ) -> dict:
+    directorio = Path(datos_dir) / str(temporada) / f"j{jornada:02d}"
+    fichero_normalizados = directorio / "insights_normalizados.json"
+    fichero_eliminados = directorio / "nombres_eliminados.json"
+    decisiones = {
+        insight.get("nombre_transcrito"): insight.get("jugador_id")
+        for insight in _leer_guardado(fichero_normalizados)
+    }
+    for eliminado in _leer_guardado(fichero_eliminados):
+        if eliminado.get("motivo") == "sin_coincidencia":
+            decisiones[eliminado.get("nombre")] = None
+
     por_id = {jugador["id"]: jugador for jugador in jugadores}
     citas = {}
     for insight in insights:
@@ -120,6 +135,13 @@ def normalizar_insights(
     resueltos = {}
     eliminados = []
     for nombre, cita in citas.items():
+        decidido = decisiones.get(nombre, "")
+        if decidido is None:
+            eliminados.append({"nombre": nombre, "quote": cita, "motivo": "sin_coincidencia"})
+            continue
+        if decidido in por_id:
+            resueltos[nombre] = por_id[decidido]
+            continue
         try:
             jugador_id = _consultar(nombre, cita, jugadores, modelo=modelo, cliente=cliente)
         except (OpenAIError, ValueError, TypeError, KeyError):
@@ -143,15 +165,30 @@ def normalizar_insights(
         if insight["jugador"] in resueltos
     ]
 
-    directorio = Path(datos_dir) / str(temporada) / f"j{jornada:02d}"
     directorio.mkdir(parents=True, exist_ok=True)
-    _guardar(directorio / "insights_normalizados.json", normalizados)
-    _guardar(directorio / "nombres_eliminados.json", eliminados)
+    _guardar(fichero_normalizados, normalizados)
+    _guardar(fichero_eliminados, eliminados)
     return {"insights": normalizados, "eliminados": eliminados}
 
 
+def _leer_guardado(fichero: Path) -> list[dict]:
+    if not fichero.exists():
+        return []
+    try:
+        guardado = json.loads(fichero.read_text(encoding="utf-8"))
+    except ValueError:
+        guardado = None
+    if not isinstance(guardado, list) or any(not isinstance(item, dict) for item in guardado):
+        raise ErrorDecisionesGuardadas(
+            f"El fichero {fichero} está dañado: corrígelo o bórralo para resolver de nuevo"
+        )
+    return guardado
+
+
 def _guardar(fichero: Path, contenido: list[dict]) -> None:
-    fichero.write_text(json.dumps(contenido, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporal = fichero.with_name(fichero.name + ".tmp")
+    temporal.write_text(json.dumps(contenido, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporal.replace(fichero)
 
 
 def _candidatos(nombre: str, jugadores: list[dict]) -> list[dict]:

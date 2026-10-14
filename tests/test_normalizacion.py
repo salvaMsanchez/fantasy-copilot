@@ -626,3 +626,188 @@ def test_tres_llamadas_con_argumentos_mal_formados_agotan_el_tope_de_herramienta
     normalizar([insight("Rafiña")], tmp_path, openai_falso, oficiales=CON_EQUIPOS)
 
     assert [ofrece_herramientas(p) for p in openai_falso.peticiones] == [True, True, True, False]
+
+
+FICHEROS = ("insights_normalizados.json", "nombres_eliminados.json")
+DECISIONES_PRIMERA = [("75 kg para Moreno", elige(None)), ("Rafiña", elige("411295"))]
+# Si se volviera a consultar, estas respuestas cambiarían el resultado de la primera ejecución.
+OTRAS_DECISIONES = [("75 kg para Moreno", elige("411295")), ("Rafiña", elige("937958"))]
+
+
+def rafina(quote="Rafiña es fijo esta jornada"):
+    return insight("Rafiña", quote)
+
+
+def kilos():
+    return insight("75 kg para Moreno", "Pesa 75 kg para Moreno")
+
+
+def de_otro_video(oido):
+    fuente = {
+        **oido["fuente"],
+        "video_id": "OTRO_VIDEO1",
+        "url": "https://youtube.com/watch?v=OTRO_VIDEO1",
+    }
+    return {**oido, "fuente": fuente}
+
+
+def primera_ejecucion(datos_dir, insights, reglas=DECISIONES_PRIMERA):
+    return normalizar(insights, datos_dir, OpenAIFalso(reglas))
+
+
+def test_una_segunda_ejecucion_con_los_mismos_insights_no_hace_ninguna_peticion(tmp_path):
+    primera_ejecucion(tmp_path, [kilos(), rafina()])
+    openai_falso = OpenAIFalso(OTRAS_DECISIONES)
+
+    normalizar([kilos(), rafina()], tmp_path, openai_falso)
+
+    assert openai_falso.peticiones == []
+
+
+def test_una_segunda_ejecucion_con_los_mismos_insights_devuelve_el_mismo_resultado(tmp_path):
+    primero = primera_ejecucion(tmp_path, [kilos(), rafina()])
+
+    segundo = normalizar([kilos(), rafina()], tmp_path, OpenAIFalso(OTRAS_DECISIONES))
+
+    assert segundo == primero
+
+
+def test_una_segunda_ejecucion_con_los_mismos_insights_deja_los_dos_ficheros_iguales(tmp_path):
+    primera_ejecucion(tmp_path, [kilos(), rafina()])
+    antes = {nombre: leer(tmp_path, 12, nombre) for nombre in FICHEROS}
+
+    normalizar([kilos(), rafina()], tmp_path, OpenAIFalso(OTRAS_DECISIONES))
+
+    assert {nombre: leer(tmp_path, 12, nombre) for nombre in FICHEROS} == antes
+
+
+def test_un_insight_nuevo_con_un_nombre_ya_resuelto_queda_resuelto_al_mismo_jugador(tmp_path):
+    primera_ejecucion(tmp_path, [rafina()])
+
+    resultado = normalizar(
+        [rafina(), de_otro_video(rafina())], tmp_path, OpenAIFalso(OTRAS_DECISIONES)
+    )
+
+    assert [(i["fuente"]["video_id"], i["jugador_id"]) for i in resultado["insights"]] == [
+        ("AT_UTIeNmtI", "411295"),
+        ("OTRO_VIDEO1", "411295"),
+    ]
+
+
+def test_en_una_segunda_ejecucion_solo_se_consulta_el_nombre_nuevo(tmp_path):
+    primera_ejecucion(tmp_path, [kilos(), rafina()])
+    openai_falso = OpenAIFalso([("la mine", elige("937958"))])
+
+    normalizar([kilos(), rafina(), insight("la mine", "la mine es duda")], tmp_path, openai_falso)
+
+    assert ["la mine" in p["enviado"] for p in openai_falso.peticiones] == [True]
+
+
+def primera_con_error_api(datos_dir):
+    primera_ejecucion(datos_dir, [rafina()], [("Rafiña", openai.OpenAIError("fallo de conexión"))])
+
+
+def test_un_nombre_eliminado_por_error_api_se_resuelve_en_la_siguiente_ejecucion(tmp_path):
+    primera_con_error_api(tmp_path)
+
+    normalizar([rafina()], tmp_path, OpenAIFalso([("Rafiña", elige("411295"))]))
+
+    assert leer(tmp_path, 12, "insights_normalizados.json") == [{**rafina(), **RAPHINHA_RESUELTO}]
+
+
+def test_un_nombre_eliminado_por_error_api_y_resuelto_despues_deja_de_estar_eliminado(tmp_path):
+    primera_con_error_api(tmp_path)
+
+    normalizar([rafina()], tmp_path, OpenAIFalso([("Rafiña", elige("411295"))]))
+
+    assert leer(tmp_path, 12, "nombres_eliminados.json") == []
+
+
+def test_si_el_identificador_guardado_ya_no_esta_en_la_lista_oficial_se_vuelve_a_consultar(
+    tmp_path,
+):
+    primera_ejecucion(tmp_path, [rafina()])
+    nueva_lista = [{**RAPHINHA, "id": "999001"}, LAMINE, GONZALO_MADRID, GONZALO_ESPANYOL]
+
+    resultado = normalizar(
+        [rafina()], tmp_path, OpenAIFalso([("Rafiña", elige("999001"))]), oficiales=nueva_lista
+    )
+
+    assert [i["jugador_id"] for i in resultado["insights"]] == ["999001"]
+
+
+def test_un_nombre_eliminado_que_ya_no_llega_desaparece_de_nombres_eliminados(tmp_path):
+    primera_ejecucion(tmp_path, [kilos(), rafina()])
+
+    normalizar([rafina()], tmp_path, OpenAIFalso(DECISIONES_PRIMERA))
+
+    assert leer(tmp_path, 12, "nombres_eliminados.json") == []
+
+
+def test_un_insight_resuelto_que_ya_no_llega_desaparece_de_insights_normalizados(tmp_path):
+    primera_ejecucion(tmp_path, [rafina("Cita 1"), rafina("Cita 2")])
+
+    normalizar([rafina("Cita 1")], tmp_path, OpenAIFalso(DECISIONES_PRIMERA))
+
+    assert [i["quote_original"] for i in leer(tmp_path, 12, "insights_normalizados.json")] == [
+        "Cita 1"
+    ]
+
+
+FICHERO_DANADO = pytest.mark.parametrize(
+    ("danado", "contenido"),
+    [(nombre, contenido) for nombre in FICHEROS for contenido in ('[{"jugador":', "{}")],
+    ids=[
+        "insights_no_es_json",
+        "insights_no_es_lista",
+        "eliminados_no_es_json",
+        "eliminados_no_es_lista",
+    ],
+)
+
+
+def preparar_ficheros(datos_dir, danado, contenido):
+    """Deja en la carpeta de la jornada 12 el fichero `danado` con `contenido` y el otro vacío."""
+    carpeta = datos_dir / "2026" / "j12"
+    carpeta.mkdir(parents=True)
+    for nombre in FICHEROS:
+        (carpeta / nombre).write_text(contenido if nombre == danado else "[]", encoding="utf-8")
+    return carpeta
+
+
+@FICHERO_DANADO
+def test_un_fichero_guardado_danado_detiene_la_resolucion_con_un_error_que_dice_su_ruta(
+    tmp_path, danado, contenido
+):
+    carpeta = preparar_ficheros(tmp_path, danado, contenido)
+
+    with pytest.raises(Exception) as error:
+        normalizar([rafina()], tmp_path, OpenAIFalso(DECISIONES_PRIMERA))
+
+    assert str(carpeta / danado) in str(error.value)
+
+
+@FICHERO_DANADO
+def test_con_un_fichero_guardado_danado_no_se_hace_ninguna_peticion_al_modelo(
+    tmp_path, danado, contenido
+):
+    preparar_ficheros(tmp_path, danado, contenido)
+    openai_falso = OpenAIFalso(DECISIONES_PRIMERA)
+
+    with pytest.raises(Exception):  # noqa: B017
+        normalizar([rafina()], tmp_path, openai_falso)
+
+    assert openai_falso.peticiones == []
+
+
+@FICHERO_DANADO
+def test_con_un_fichero_guardado_danado_los_dos_ficheros_quedan_como_estaban(
+    tmp_path, danado, contenido
+):
+    carpeta = preparar_ficheros(tmp_path, danado, contenido)
+    antes = {nombre: (carpeta / nombre).read_bytes() for nombre in FICHEROS}
+
+    with pytest.raises(Exception):  # noqa: B017
+        normalizar([rafina()], tmp_path, OpenAIFalso(DECISIONES_PRIMERA))
+
+    assert {nombre: (carpeta / nombre).read_bytes() for nombre in FICHEROS} == antes
