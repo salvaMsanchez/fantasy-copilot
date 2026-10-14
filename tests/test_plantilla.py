@@ -144,3 +144,50 @@ def test_una_plantilla_de_menos_de_once_jugadores_indica_cuantos_tiene_y_cuantos
 
     assert re.search(r"\b10\b", mensaje)
     assert re.search(r"\b11\b", mensaje)
+
+
+OFICIALES_CON_LETRAS_ESPECIALES = [
+    *JUGADORES_OFICIALES,
+    oficial("20", "Alexander Sørloth", "Delantero centro", "Atlético de Madrid"),
+    oficial("21", "Łukasz Kowalski", "Mediocentro", "Real Betis"),
+    oficial("22", "Luka Đurić", "Defensa central", "Getafe CF"),
+]
+
+
+@pytest.mark.parametrize(
+    "escrito, jugador_id, nombre_oficial",
+    [
+        pytest.param("Alexander Sorloth", "20", "Alexander Sørloth", id="o_en_lugar_de_o_barrada"),
+        pytest.param("lukasz kowalski", "21", "Łukasz Kowalski", id="l_en_lugar_de_l_barrada"),
+        pytest.param("Luka Duric", "22", "Luka Đurić", id="d_en_lugar_de_d_barrada"),
+        pytest.param("Alexander Sørloth", "20", "Alexander Sørloth", id="con_la_letra_especial"),
+    ],
+)
+def test_el_nombre_se_asocia_aunque_se_escriba_sin_letras_barradas(
+    tmp_path, escrito, jugador_id, nombre_oficial
+):
+    entradas = [*PLANTILLA_VALIDA, {"nombre": escrito, "posicion": "delantero"}]
+
+    plantilla = cargar_plantilla(escribir(tmp_path, entradas), OFICIALES_CON_LETRAS_ESPECIALES)
+
+    asociado = plantilla[-1]
+    assert (asociado["nombre"], asociado["jugador_id"]) == (nombre_oficial, jugador_id)
+
+
+def test_dos_oficiales_que_solo_difieren_en_una_letra_barrada_producen_error_de_ambiguedad(
+    tmp_path,
+):
+    oficiales = [
+        *JUGADORES_OFICIALES,
+        oficial("30", "Martin Ødegaard", "Mediapunta", "Real Madrid"),
+        oficial("31", "Martin Odegaard", "Mediapunta", "Real Sociedad"),
+    ]
+    entradas = [*PLANTILLA_VALIDA, {"nombre": "Martin Odegaard", "posicion": "centrocampista"}]
+    ruta = escribir(tmp_path, entradas)
+
+    with pytest.raises(ErrorPlantilla) as error:
+        cargar_plantilla(ruta, oficiales)
+
+    mensaje = str(error.value).replace(str(ruta), "")
+    assert "Martin Odegaard" in mensaje
+    assert re.search(r"(?i)ambig[uü]", mensaje)
