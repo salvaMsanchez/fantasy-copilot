@@ -8,15 +8,20 @@ Para una jornada, busca los vídeos de los canales de análisis fantasy, descarg
 
 ## Pipeline
 
-```
-Transfermarkt ─▶ Lista oficial de jugadores ─────────────┐
-                                                         ▼
-YouTube ─▶ Vídeos de la jornada ─▶ Transcripciones ─▶ Insights ─▶ Nombres resueltos
-                                                                         │
-Tu plantilla ─▶ Validada contra la lista oficial ─▶ Agente ◀─ Índice (ChromaDB) ◀┘
-                                                     │
-                                                     ▼
-                                              Once recomendado
+```mermaid
+flowchart TD
+    TM[Transfermarkt] --> J[Lista oficial de jugadores]
+    YT[YouTube] --> V[Vídeos de la jornada]
+    V --> T[Transcripciones]
+    T --> I[Insights]
+    I --> N[Nombres resueltos]
+    J --> N
+    N --> IX[(Índice ChromaDB)]
+    P[Tu plantilla] --> PV[Plantilla validada]
+    J --> PV
+    PV --> A[Agente]
+    IX --> A
+    A --> O[Once recomendado]
 ```
 
 ## Requisitos
