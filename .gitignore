@@ -28,6 +28,9 @@ venv/
 /jugadores_laliga.json
 /nombres_eliminados.json
 
+# Plantilla personal del usuario
+/plantilla.json
+
 # ChromaDB
 chroma_db/
 
