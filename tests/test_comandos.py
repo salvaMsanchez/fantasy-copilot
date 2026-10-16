@@ -1,6 +1,8 @@
 import json
 import os
+import random
 import re
+import string
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -111,11 +113,11 @@ class TransfermarktFalso:
 # --- YouTube Data API: los vídeos se publican en el canal de carrasco --------------------------
 
 
-def video(video_id, titulo):
+def video(video_id, titulo, fecha="2026-11-05"):
     return {
         "snippet": {
             "title": titulo,
-            "publishedAt": "2026-11-05T10:00:00Z",
+            "publishedAt": f"{fecha}T10:00:00Z",
             "resourceId": {"videoId": video_id},
         }
     }
@@ -124,6 +126,7 @@ def video(video_id, titulo):
 VIDEO_UNO = video("videouno01", "J12 onces probables")
 VIDEO_DOS = video("videodos002", "Jornada 12: chollos y descartes")
 CARRASCO = "UCu7ZOzCUgWpvvJzYAdnw0_Q"
+JORNADA_PERFECTA = "UCvMw41zGXyYYPDvyXcHZfug"
 
 
 class _Peticion:
@@ -143,10 +146,13 @@ class _Recurso:
 
 
 class YouTubeFalso:
-    """Hace de cliente de YouTube Data API: una sola página de subidas por canal."""
+    """Hace de cliente de YouTube Data API: una sola página de subidas por canal.
 
-    def __init__(self, videos=(VIDEO_UNO, VIDEO_DOS)):
-        self.videos = list(videos)
+    `videos` son los de carrasco; `por_canal` asocia el id de otros canales con sus vídeos.
+    """
+
+    def __init__(self, videos=(VIDEO_UNO, VIDEO_DOS), por_canal=None):
+        self.por_canal = {CARRASCO: list(videos), **(por_canal or {})}
 
     def channels(self):
         return _Recurso(self._canal)
@@ -158,7 +164,8 @@ class YouTubeFalso:
         return {"items": [{"contentDetails": {"relatedPlaylists": {"uploads": "UU" + id[2:]}}}]}
 
     def _pagina(self, playlistId, **_):
-        return {"items": self.videos if playlistId == "UU" + CARRASCO[2:] else []}
+        canal = next((c for c in self.por_canal if playlistId == "UU" + c[2:]), None)
+        return {"items": self.por_canal.get(canal, [])}
 
 
 # --- youtube-transcript-api -------------------------------------------------------------------
@@ -172,8 +179,26 @@ class Fragmento:
 
 
 def transcripcion(marca):
-    relleno = "el analista repasa con calma las alineaciones de la jornada " * 12
+    """La marca y un relleno propio de ella: transcripciones con marcas distintas no son copias."""
+    relleno = " ".join(palabras(marca, 120))
     return [Fragmento(f"{marca} {relleno}", 0.0, 60.0)]
+
+
+def palabras(semilla, cantidad):
+    """Palabras inventadas, deterministas, que apenas comparten letras seguidas con otra semilla."""
+    azar = random.Random(semilla)
+    return [
+        "".join(azar.choice(string.ascii_lowercase) for _ in range(azar.randint(4, 9)))
+        for _ in range(cantidad)
+    ]
+
+
+# Contenido de un vídeo: la marca que reconoce `OpenAIFalso` y 199 palabras más.
+CONTENIDO = ["marcadoruno", *palabras("contenido", 199)]
+
+
+def hablado(palabras_del_video):
+    return [Fragmento(" ".join(palabras_del_video), 0.0, 600.0)]
 
 
 class TranscripcionesFalsas:
@@ -264,6 +289,7 @@ class OpenAIFalso:
         self.extraccion = extraccion
         self.fallar = fallar
         self.resumenes = []
+        self.extracciones = 0
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._crear))
         self.embeddings = SimpleNamespace(create=self._embeddings)
 
@@ -309,6 +335,7 @@ class OpenAIFalso:
         raise AssertionError(f"Petición inesperada con esquema {esquema!r}")
 
     def _extraer(self, enviado):
+        self.extracciones += 1
         marca = next((m for m in self.extraccion if m in enviado), None)
         if marca is None:
             raise AssertionError("Petición de extracción sin marca conocida")
@@ -611,3 +638,148 @@ def test_el_paquete_instala_el_comando_fantasy_copilot(tmp_path):
     assert resultado.returncode != 0
     assert "--jornada" in resultado.stderr
     assert "Traceback" not in resultado.stderr
+
+
+# --- Contenido publicado en varios vídeos -------------------------------------------------------
+
+J8 = 8
+PODCAST_J8 = video(
+    "podcast0710",
+    "9x13 - PODCAST J8 ⚽ ALINEACIONES, CHOLLOS y PICKS FANTASY 2026/27",
+    "2026-10-07",
+)
+PODCAST_J8_COPIA = video(
+    "podcast0810", "PODCAST BIWENGER FANTASY J8  ⚽ ALINEACIONES PROBABLES Y FICHITAS", "2026-10-08"
+)
+PODCAST_J8_TERCERA = video("podcast0910", "PODCAST J8 📱", "2026-10-09")
+PREVIA_J8 = (
+    "LA PREVIA FANTASY DE LA JORNADA 8 | MIS TIER LIST FANTASY POR POSICIONES | "
+    "PRIMERAS ALINEACIONES"
+)
+
+
+def _id(video_publicado):
+    return video_publicado["snippet"]["resourceId"]["videoId"]
+
+
+def ingesta_j8(capsys, carrasco=(), jornada_perfecta=(), cliente=None):
+    """Ingesta de la jornada 8 con pares (vídeo, palabras de su transcripción) por canal."""
+    youtube = YouTubeFalso(
+        [v for v, _ in carrasco], por_canal={JORNADA_PERFECTA: [v for v, _ in jornada_perfecta]}
+    )
+    transcripciones = TranscripcionesFalsas(
+        {_id(v): hablado(p) for v, p in [*carrasco, *jornada_perfecta]}
+    )
+    con = servicios(youtube=youtube, transcripciones=transcripciones, cliente_openai=cliente)
+    return ingesta(capsys, jornada=J8, con=con)
+
+
+def linea_tras_no_disponibles(salida):
+    lineas = [linea.strip() for linea in salida.splitlines()]
+    indice = next(
+        (n for n, linea in enumerate(lineas) if linea.startswith("Transcripciones no disponibles")),
+        None,
+    )
+    assert indice is not None, f"El resumen no tiene la línea de no disponibles:\n{salida}"
+    return lineas[indice + 1] if indice + 1 < len(lineas) else ""
+
+
+def test_sin_copias_el_resumen_da_cero_transcripciones_duplicadas_tras_las_no_disponibles(capsys):
+    resultado = ingesta(capsys)
+
+    assert linea_tras_no_disponibles(resultado.salida) == "Transcripciones duplicadas: 0"
+
+
+def test_de_dos_videos_con_la_misma_transcripcion_solo_se_pide_una_extraccion(capsys):
+    cliente = OpenAIFalso()
+
+    ingesta_j8(
+        capsys,
+        jornada_perfecta=[(PODCAST_J8, CONTENIDO), (PODCAST_J8_COPIA, CONTENIDO)],
+        cliente=cliente,
+    )
+
+    assert cliente.extracciones == 1
+
+
+def test_de_dos_videos_con_la_misma_transcripcion_quedan_los_insights_del_publicado_antes(
+    capsys, datos
+):
+    ingesta_j8(capsys, jornada_perfecta=[(PODCAST_J8, CONTENIDO), (PODCAST_J8_COPIA, CONTENIDO)])
+
+    guardados = json.loads(
+        (datos / str(TEMPORADA) / "j08" / "insights.json").read_text(encoding="utf-8")
+    )
+    assert {insight["fuente"]["video_id"] for insight in guardados["insights"]} == {"podcast0710"}
+
+
+def test_de_tres_videos_con_la_misma_transcripcion_solo_se_pide_una_extraccion(capsys):
+    cliente = OpenAIFalso()
+
+    ingesta_j8(
+        capsys,
+        jornada_perfecta=[
+            (PODCAST_J8, CONTENIDO),
+            (PODCAST_J8_COPIA, CONTENIDO),
+            (PODCAST_J8_TERCERA, CONTENIDO),
+        ],
+        cliente=cliente,
+    )
+
+    assert cliente.extracciones == 1
+
+
+def test_con_tres_videos_de_la_misma_transcripcion_el_resumen_da_dos_duplicadas(capsys):
+    resultado = ingesta_j8(
+        capsys,
+        jornada_perfecta=[
+            (PODCAST_J8, CONTENIDO),
+            (PODCAST_J8_COPIA, CONTENIDO),
+            (PODCAST_J8_TERCERA, CONTENIDO),
+        ],
+    )
+
+    assert linea_tras_no_disponibles(resultado.salida) == "Transcripciones duplicadas: 2"
+
+
+def test_dos_transcripciones_que_difieren_en_una_de_cada_diez_palabras_se_extraen_una_vez(capsys):
+    otras = palabras("cambios", len(CONTENIDO))
+    retocado = [otras[n] if n % 10 == 9 else p for n, p in enumerate(CONTENIDO)]
+    cliente = OpenAIFalso()
+
+    ingesta_j8(
+        capsys,
+        jornada_perfecta=[(PODCAST_J8, CONTENIDO), (PODCAST_J8_COPIA, retocado)],
+        cliente=cliente,
+    )
+
+    assert cliente.extracciones == 1
+
+
+def test_dos_videos_con_el_mismo_titulo_que_solo_comparten_el_saludo_se_extraen_los_dos(capsys):
+    saludo = CONTENIDO[:30]
+    cliente = OpenAIFalso()
+
+    ingesta_j8(
+        capsys,
+        carrasco=[
+            (video("previa0001", PREVIA_J8, "2026-10-06"), [*saludo, *palabras("una", 170)]),
+            (video("previa0002", PREVIA_J8, "2026-10-07"), [*saludo, *palabras("otra", 170)]),
+        ],
+        cliente=cliente,
+    )
+
+    assert cliente.extracciones == 2
+
+
+def test_la_misma_transcripcion_en_canales_distintos_se_extrae_en_los_dos(capsys):
+    cliente = OpenAIFalso()
+
+    ingesta_j8(
+        capsys,
+        carrasco=[(video("carrasco08", "J8 onces probables", "2026-10-07"), CONTENIDO)],
+        jornada_perfecta=[(PODCAST_J8, CONTENIDO)],
+        cliente=cliente,
+    )
+
+    assert cliente.extracciones == 2

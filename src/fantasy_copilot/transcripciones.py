@@ -9,6 +9,51 @@ from fantasy_copilot.configuracion import Proxy
 
 IDIOMA = "es"
 LONGITUD_MAXIMA_MOTIVO = 200
+PALABRAS_POR_SECUENCIA = 3
+PARECIDO_MINIMO_COPIA = 0.5
+
+
+def separar_copias(transcripciones: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Separa las transcripciones obtenidas que repiten el contenido de otra del mismo canal.
+
+    De cada grupo de copias se conserva la del vídeo publicado antes. El parecido es la parte
+    de las secuencias de tres palabras de la más corta que aparecen también en la otra.
+    """
+    obtenidas = [
+        (posicion, transcripcion)
+        for posicion, transcripcion in enumerate(transcripciones)
+        if transcripcion["estado"] == "ok"
+    ]
+    # La lista llega del vídeo más reciente al más antiguo: a igual fecha, va antes el de detrás.
+    obtenidas.sort(key=lambda par: (par[1]["fecha"], -par[0]))
+
+    conservadas: list[tuple[dict, set]] = []
+    copias = []
+    for _, transcripcion in obtenidas:
+        secuencias = _secuencias(transcripcion["transcripcion_cruda"])
+        if any(
+            otra["canal"] == transcripcion["canal"]
+            and _parecido(secuencias, secuencias_otra) >= PARECIDO_MINIMO_COPIA
+            for otra, secuencias_otra in conservadas
+        ):
+            copias.append(transcripcion)
+        else:
+            conservadas.append((transcripcion, secuencias))
+
+    ids_copias = {id(copia) for copia in copias}
+    return [t for t in transcripciones if id(t) not in ids_copias], copias
+
+
+def _secuencias(texto: str) -> set[tuple[str, ...]]:
+    palabras = re.findall(r"\w+", texto.lower())
+    n = PALABRAS_POR_SECUENCIA
+    return {tuple(palabras[i : i + n]) for i in range(len(palabras) - n + 1)}
+
+
+def _parecido(unas: set, otras: set) -> float:
+    if not unas or not otras:
+        return 0.0
+    return len(unas & otras) / min(len(unas), len(otras))
 
 
 def obtener_transcripciones(
