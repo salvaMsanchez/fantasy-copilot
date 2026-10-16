@@ -92,7 +92,7 @@ Un fichero JSON con la lista de jugadores de tu equipo, como `plantilla.ejemplo.
   {"nombre": "Augusto Batalla", "posicion": "portero"},
   {"nombre": "Andrei Ratiu", "posicion": "defensa"},
   {"nombre": "Aleix Febas", "posicion": "centrocampista"},
-  {"nombre": "Vedat Muriqi", "posicion": "delantero"}
+  {"nombre": "Iván Azón", "posicion": "delantero"}
 ]
 ```
 
