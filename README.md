@@ -70,7 +70,7 @@ La temporada es el año en que empieza: la 2026-27 es `2026`. La jornada va de 1
 fantasy-copilot ingesta --jornada 12 --temporada 2026
 ```
 
-Descarga la lista oficial de jugadores de la temporada (solo la primera vez), busca los vídeos de la jornada, descarga sus transcripciones, extrae los insights y resuelve los nombres. Todo queda en `datos/`, con los insights resueltos en `datos/2026/j12/insights_normalizados.json`. Termina con un resumen de cifras: vídeos, transcripciones obtenidas y no disponibles, insights extraídos, textos fallidos, insights normalizados y nombres eliminados.
+Descarga la lista oficial de jugadores de la temporada (solo la primera vez), busca los vídeos de la jornada, descarga sus transcripciones, extrae los insights y resuelve los nombres. Todo queda en `datos/`, con los insights resueltos en `datos/2026/j12/insights_normalizados.json`. Las transcripciones de un mismo canal que repiten el contenido de otra (un directo subido dos veces, un podcast con otro título) solo se extraen una vez. Termina con un resumen de cifras: vídeos, transcripciones obtenidas, no disponibles y duplicadas, insights extraídos, textos fallidos, insights normalizados y nombres eliminados.
 
 Si se vuelve a ejecutar para la misma jornada, cada etapa aprovecha lo que ya guardó: solo se procesa lo nuevo y lo que falló.
 

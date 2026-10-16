@@ -17,7 +17,7 @@ from fantasy_copilot.jugadores import ErrorTransfermarkt, obtener_jugadores
 from fantasy_copilot.normalizacion import ErrorDecisionesGuardadas, normalizar_insights
 from fantasy_copilot.plantilla import ErrorPlantilla, cargar_plantilla
 from fantasy_copilot.textos import preparar_textos
-from fantasy_copilot.transcripciones import obtener_transcripciones
+from fantasy_copilot.transcripciones import obtener_transcripciones, separar_copias
 from fantasy_copilot.videos import ErrorYouTube, obtener_videos
 
 JORNADAS = range(1, 39)
@@ -133,8 +133,9 @@ def _ingesta(jornada: int, temporada: int, servicios: Servicios) -> None:
         proxy=configuracion.proxy,
         crear_cliente=servicios.transcripciones,
     )
+    sin_copias, copias = separar_copias(transcripciones)
     extraccion = extraer_insights(
-        preparar_textos(transcripciones),
+        preparar_textos(sin_copias),
         jornada=jornada,
         temporada=temporada,
         datos_dir=datos_dir,
@@ -158,6 +159,7 @@ def _ingesta(jornada: int, temporada: int, servicios: Servicios) -> None:
         f"Vídeos encontrados: {len(videos)}\n"
         f"Transcripciones obtenidas: {obtenidas}\n"
         f"Transcripciones no disponibles: {len(transcripciones) - obtenidas}\n"
+        f"Transcripciones duplicadas: {len(copias)}\n"
         f"Insights extraídos: {len(extraccion['insights'])}\n"
         f"Textos fallidos: {len(extraccion['fallidos'])}\n"
         f"Insights normalizados: {len(normalizacion['insights'])}\n"
