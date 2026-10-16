@@ -303,6 +303,59 @@ def test_se_reunen_los_videos_de_todos_los_canales_del_mas_reciente_al_mas_antig
     ]
 
 
+def videos_de_la_jornada(jornada, titulo):
+    youtube = YouTubeFalso({"carrasco": [[video("v", titulo, "2026-10-20T18:00:00Z")]]})
+    return identificadores(obtener_videos(jornada, 2026, cliente=youtube))
+
+
+TITULOS_DE_PREVIA_J8 = [
+    "LA PREVIA FANTASY DE LA JORNADA 8 | MIS TIER LIST FANTASY POR POSICIONES"
+    " | PRIMERAS ALINEACIONES",
+    "Mis ALINEACIONES PROBABLES y PRONÓSTICOS para la JORNADA 8 con TODA la ÚLTIMA HORA"
+    " | LaLiga 26/27",
+    "PODCAST BIWENGER FANTASY J8  ⚽ ALINEACIONES PROBABLES Y FICHITAS",
+    "EL NOTICIERO FANTASY | CIERRE DE CLAUSULAZOS PARA LA J8 | ÚLTIMO DÍA DE DOBLE RECOMPENSA",
+]
+
+TITULOS_POSTERIORES_A_J8 = [
+    "✅ 4 COMPRAS FANTASY OBLIGATORIAS tras la JORNADA 8 de LA LIGA FANTASY 26/27",
+    "🔥 POST FANTASY J8: FICHAJES, REVELACIONES y DECEPCIONES 🚨 | BIWENGER y LALIGA FANTASY",
+    "🚨 ¿VENDER O MANTENER? Decisiones FANTASY tras la JORNADA 8 | Biwenger y LaLiga Fantasy",
+    "COMPRAS y VENTAS FANTASY para LA LIGA FANTASY 26/27 tras la JORNADA 8",
+]
+
+TITULOS_CON_JORNADA_PASADA_Y_SIGUIENTE = [
+    ("EL NOTICIERO FANTASY | LLOROS DE LA JORNADA 1 | TRIPLES PARA LA JORNADA 2", 1, 2),
+    ("Post fantasy J8 | Mis fichajes para la J9", 8, 9),
+]
+
+
+@pytest.mark.parametrize("titulo", TITULOS_DE_PREVIA_J8)
+def test_un_video_que_prepara_la_jornada_se_devuelve_en_su_busqueda(titulo):
+    assert videos_de_la_jornada(8, titulo) == ["v"]
+
+
+@pytest.mark.parametrize(
+    "titulo", TITULOS_POSTERIORES_A_J8 + [t.lower() for t in TITULOS_POSTERIORES_A_J8]
+)
+def test_un_video_que_comenta_la_jornada_ya_jugada_no_se_devuelve_en_su_busqueda(titulo):
+    assert videos_de_la_jornada(8, titulo) == []
+
+
+@pytest.mark.parametrize(("titulo", "pasada", "siguiente"), TITULOS_CON_JORNADA_PASADA_Y_SIGUIENTE)
+def test_un_video_que_nombra_la_jornada_pasada_y_la_siguiente_no_cuenta_para_la_pasada(
+    titulo, pasada, siguiente
+):
+    assert videos_de_la_jornada(pasada, titulo) == []
+
+
+@pytest.mark.parametrize(("titulo", "pasada", "siguiente"), TITULOS_CON_JORNADA_PASADA_Y_SIGUIENTE)
+def test_un_video_que_nombra_la_jornada_pasada_y_la_siguiente_cuenta_para_la_siguiente(
+    titulo, pasada, siguiente
+):
+    assert videos_de_la_jornada(siguiente, titulo) == ["v"]
+
+
 @pytest.mark.parametrize("llamada", ["channels", "playlistItems"])
 def test_si_falla_la_consulta_de_un_canal_el_error_lo_nombra(llamada):
     youtube = YouTubeFalso(

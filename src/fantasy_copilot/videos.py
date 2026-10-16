@@ -8,12 +8,18 @@ CANALES = {
 }
 
 _PATRON_JORNADA = re.compile(r"\b(?:jornada\s*|j)(\d+)", re.IGNORECASE)
+# Una jornada precedida de estas palabras ya se jugó: el vídeo la comenta, no la prepara.
+_PATRON_JORNADA_JUGADA = re.compile(
+    r"\b(?:tras|despu[eé]s\s+de|lloros\s+de|post(?:\s+fantasy)?)(?:\s+(?:la|el))?\s*$",
+    re.IGNORECASE,
+)
 
 
 def extraer_numero_jornada(titulo: str) -> int | None:
     for coincidencia in _PATRON_JORNADA.finditer(titulo):
         jornada = int(coincidencia.group(1))
-        if 1 <= jornada <= ULTIMA_JORNADA:
+        jugada = _PATRON_JORNADA_JUGADA.search(titulo[: coincidencia.start()])
+        if 1 <= jornada <= ULTIMA_JORNADA and not jugada:
             return jornada
     return None
 
