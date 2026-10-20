@@ -772,6 +772,32 @@ def test_dos_videos_con_el_mismo_titulo_que_solo_comparten_el_saludo_se_extraen_
     assert cliente.extracciones == 2
 
 
+def ingesta_j8_tras_extraer_la_copia(capsys):
+    """Primero solo la copia tiene transcripción y se extrae; después aparece la del original."""
+    ingesta_j8(capsys, jornada_perfecta=[(PODCAST_J8_COPIA, CONTENIDO)], cliente=OpenAIFalso())
+    youtube = YouTubeFalso([], por_canal={JORNADA_PERFECTA: [PODCAST_J8, PODCAST_J8_COPIA]})
+    transcripciones = TranscripcionesFalsas(
+        {_id(PODCAST_J8): hablado(CONTENIDO), _id(PODCAST_J8_COPIA): hablado(CONTENIDO)}
+    )
+    con = servicios(youtube=youtube, transcripciones=transcripciones, cliente_openai=OpenAIFalso())
+    return ingesta(capsys, jornada=J8, con=con)
+
+
+def test_un_video_que_deja_de_extraerse_no_aporta_insights_normalizados_en_la_ingesta_siguiente(
+    capsys, datos
+):
+    ingesta_j8_tras_extraer_la_copia(capsys)
+
+    guardados = json.loads(normalizados(datos, jornada="08").read_text(encoding="utf-8"))
+    assert {insight["fuente"]["video_id"] for insight in guardados} == {_id(PODCAST_J8)}
+
+
+def test_un_video_que_deja_de_extraerse_no_cuenta_en_los_insights_extraidos_del_resumen(capsys):
+    resultado = ingesta_j8_tras_extraer_la_copia(capsys)
+
+    assert cifra(resultado.salida, "extraído") == 2
+
+
 def test_la_misma_transcripcion_en_canales_distintos_se_extrae_en_los_dos(capsys):
     cliente = OpenAIFalso()
 

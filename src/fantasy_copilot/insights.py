@@ -124,7 +124,21 @@ def extraer_insights(
             resultado["procesados"].append(identidad)
             procesados.add(clave)
         _guardar(fichero, resultado)
-    return resultado
+
+    entrada = {(texto["video_id"], texto["chunk"]) for texto in textos}
+    return {
+        "insights": [
+            insight
+            for insight in resultado["insights"]
+            if (insight["fuente"]["video_id"], insight["fuente"]["chunk"]) in entrada
+        ],
+        **{
+            clave: [
+                item for item in resultado[clave] if (item["video_id"], item["chunk"]) in entrada
+            ]
+            for clave in ("procesados", "fallidos")
+        },
+    }
 
 
 def _leer_guardado(fichero: Path) -> dict:
