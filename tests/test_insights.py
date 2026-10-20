@@ -512,6 +512,84 @@ def test_un_fichero_guardado_danado_queda_exactamente_igual_que_estaba(tmp_path,
     assert ruta.read_bytes() == contenido.encode("utf-8")
 
 
+# --- Textos que dejan de formar parte de la entrada -----------------------------------------
+# Un `OpenAIFalso([])` hace fallar el test en cuanto recibe cualquier petición.
+
+J8 = 8
+VIDEO_A = "videoAAAAAA"
+VIDEO_B = "videoBBBBBB"
+VIDEO_C = "videoCCCCCC"
+VIDEO_D = "videoDDDDDD"
+
+
+def texto_j8(marca, video_id):
+    return texto(marca, video_id=video_id, jornada=J8)
+
+
+TEXTO_A = texto_j8("TEXTO_A", VIDEO_A)
+TEXTO_B = texto_j8("TEXTO_B", VIDEO_B)
+
+
+def extraer_j8(textos, datos_dir, cliente):
+    return extraer(textos, datos_dir, cliente, jornada=J8)
+
+
+def primera_extraccion_de_a_y_b(datos_dir):
+    """A da dos insights (Rafiña y la mine) y B uno (Pedri)."""
+    openai_falso = OpenAIFalso(
+        [
+            ("TEXTO_A", completa(INSIGHT_RAFINA, INSIGHT_LAMINE)),
+            ("TEXTO_B", completa(insight("Pedri"))),
+        ]
+    )
+    extraer_j8([TEXTO_A, TEXTO_B], datos_dir, openai_falso)
+
+
+def test_una_extraccion_sin_un_texto_ya_extraido_no_devuelve_sus_insights(tmp_path):
+    primera_extraccion_de_a_y_b(tmp_path)
+
+    resultado = extraer_j8([TEXTO_A], tmp_path, OpenAIFalso([]))
+
+    assert jugadores(resultado) == ["Rafiña", "la mine"]
+
+
+def test_una_extraccion_sin_un_texto_ya_extraido_no_lo_da_como_procesado(tmp_path):
+    primera_extraccion_de_a_y_b(tmp_path)
+
+    resultado = extraer_j8([TEXTO_A], tmp_path, OpenAIFalso([]))
+
+    assert resultado["procesados"] == [{"video_id": VIDEO_A, "chunk": None}]
+
+
+def test_un_texto_fallido_que_ya_no_esta_en_la_entrada_no_se_da_como_fallido_ni_se_reintenta(
+    tmp_path,
+):
+    openai_falso = OpenAIFalso([("TEXTO_A", completa(INSIGHT_RAFINA)), ("TEXTO_C", error_api())])
+    extraer_j8([TEXTO_A, texto_j8("TEXTO_C", VIDEO_C)], tmp_path, openai_falso)
+
+    resultado = extraer_j8([TEXTO_A], tmp_path, OpenAIFalso([]))
+
+    assert resultado["fallidos"] == []
+
+
+def test_un_texto_que_vuelve_a_la_entrada_recupera_sus_insights_sin_pedirlos_otra_vez(tmp_path):
+    primera_extraccion_de_a_y_b(tmp_path)
+    extraer_j8([TEXTO_A], tmp_path, OpenAIFalso([]))
+
+    resultado = extraer_j8([TEXTO_A, TEXTO_B], tmp_path, OpenAIFalso([]))
+
+    assert jugadores(resultado) == ["Pedri", "Rafiña", "la mine"]
+
+
+def test_con_un_texto_nuevo_se_pide_solo_ese_y_se_devuelven_los_insights_de_la_entrada(tmp_path):
+    primera_extraccion_de_a_y_b(tmp_path)
+    openai_falso = OpenAIFalso([("TEXTO_D", completa(insight("Gavi")))])
+
+    resultado = extraer_j8([TEXTO_A, texto_j8("TEXTO_D", VIDEO_D)], tmp_path, openai_falso)
+
+    assert jugadores(resultado) == ["Gavi", "Rafiña", "la mine"]
+
+
 def test_al_terminar_en_la_carpeta_de_la_jornada_solo_queda_insights_json(tmp_path):
     openai_falso = OpenAIFalso([("TEXTO_A", completa(INSIGHT_RAFINA)), ("TEXTO_B", error_api())])
 
