@@ -133,42 +133,50 @@ def normalizar_insights(
         citas.setdefault(insight["jugador"], insight.get("quote_original") or "")
 
     resueltos = {}
-    eliminados = []
+    eliminados = {}
+    pendientes = []
     for nombre, cita in citas.items():
         decidido = decisiones.get(nombre, "")
         if decidido is None:
-            eliminados.append({"nombre": nombre, "quote": cita, "motivo": "sin_coincidencia"})
-            continue
-        if decidido in por_id:
+            eliminados[nombre] = {"nombre": nombre, "quote": cita, "motivo": "sin_coincidencia"}
+        elif decidido in por_id:
             resueltos[nombre] = por_id[decidido]
-            continue
+        else:
+            pendientes.append(nombre)
+
+    def guardar() -> dict:
+        normalizados = [
+            {
+                **insight,
+                "jugador": resueltos[insight["jugador"]]["nombre"],
+                "jugador_id": resueltos[insight["jugador"]]["id"],
+                "equipo": resueltos[insight["jugador"]]["equipo"],
+                "posicion": resueltos[insight["jugador"]]["posicion"],
+                "nombre_transcrito": insight["jugador"],
+            }
+            for insight in insights
+            if insight["jugador"] in resueltos
+        ]
+        descartados = [eliminados[nombre] for nombre in citas if nombre in eliminados]
+        directorio.mkdir(parents=True, exist_ok=True)
+        _guardar(fichero_normalizados, normalizados)
+        _guardar(fichero_eliminados, descartados)
+        return {"insights": normalizados, "eliminados": descartados}
+
+    for nombre in pendientes:
+        cita = citas[nombre]
         try:
             jugador_id = _consultar(nombre, cita, jugadores, modelo=modelo, cliente=cliente)
         except (OpenAIError, ValueError, TypeError, KeyError):
-            eliminados.append({"nombre": nombre, "quote": cita, "motivo": "error_api"})
-            continue
-        if jugador_id in por_id:
-            resueltos[nombre] = por_id[jugador_id]
+            eliminados[nombre] = {"nombre": nombre, "quote": cita, "motivo": "error_api"}
         else:
-            eliminados.append({"nombre": nombre, "quote": cita, "motivo": "sin_coincidencia"})
+            if jugador_id in por_id:
+                resueltos[nombre] = por_id[jugador_id]
+            else:
+                eliminados[nombre] = {"nombre": nombre, "quote": cita, "motivo": "sin_coincidencia"}
+        guardar()
 
-    normalizados = [
-        {
-            **insight,
-            "jugador": resueltos[insight["jugador"]]["nombre"],
-            "jugador_id": resueltos[insight["jugador"]]["id"],
-            "equipo": resueltos[insight["jugador"]]["equipo"],
-            "posicion": resueltos[insight["jugador"]]["posicion"],
-            "nombre_transcrito": insight["jugador"],
-        }
-        for insight in insights
-        if insight["jugador"] in resueltos
-    ]
-
-    directorio.mkdir(parents=True, exist_ok=True)
-    _guardar(fichero_normalizados, normalizados)
-    _guardar(fichero_eliminados, eliminados)
-    return {"insights": normalizados, "eliminados": eliminados}
+    return guardar()
 
 
 def _leer_guardado(fichero: Path) -> list[dict]:
