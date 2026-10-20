@@ -102,7 +102,7 @@ class OpenAIFalso:
         respuesta = next((r for marca, r in self.reglas if marca in enviado), None)
         if respuesta is None:
             raise AssertionError("Petición inesperada: ninguna regla coincide con su texto")
-        if isinstance(respuesta, Exception):
+        if isinstance(respuesta, BaseException):
             raise respuesta
         return respuesta
 
@@ -811,3 +811,126 @@ def test_con_un_fichero_guardado_danado_los_dos_ficheros_quedan_como_estaban(
         normalizar([rafina()], tmp_path, OpenAIFalso(DECISIONES_PRIMERA))
 
     assert {nombre: (carpeta / nombre).read_bytes() for nombre in FICHEROS} == antes
+
+
+TCHOUAMENI = {
+    "id": "413112",
+    "nombre": "Aurélien Tchouaméni",
+    "posicion": "Pivote",
+    "equipo": "Real Madrid",
+}
+PEDRI = {"id": "683840", "nombre": "Pedri", "posicion": "Mediocentro", "equipo": "FC Barcelona"}
+CON_PEDRI = [*OFICIALES, TCHOUAMENI, PEDRI]
+
+# Las citas identifican cada consulta: los nombres pueden aparecer también en las
+# instrucciones o entre los candidatos.
+CITAS = {"Rafiña": "Primera cita", "Chamenamení": "Segunda cita", "Pedri": "Tercera cita"}
+
+
+def tres_nombres():
+    return [insight(nombre, cita) for nombre, cita in CITAS.items()]
+
+
+def respuestas(chamenameni="413112", interrumpe_en=None, error_api_en=None):
+    decisiones = {"Rafiña": "411295", "Chamenamení": chamenameni, "Pedri": "683840"}
+    reglas = []
+    for nombre, cita in CITAS.items():
+        respuesta = elige(decisiones[nombre])
+        if nombre == error_api_en:
+            respuesta = openai.OpenAIError("fallo de conexión")
+        if nombre == interrumpe_en:
+            respuesta = KeyboardInterrupt()
+        reglas.append((cita, respuesta))
+    return reglas
+
+
+def resolver_tres(datos_dir, openai_falso):
+    return normalizar(tres_nombres(), datos_dir, openai_falso, oficiales=CON_PEDRI)
+
+
+def interrumpida(datos_dir, interrumpe_en="Pedri", **cambios):
+    try:
+        resolver_tres(datos_dir, OpenAIFalso(respuestas(interrumpe_en=interrumpe_en, **cambios)))
+    except KeyboardInterrupt:
+        pass
+
+
+def consultados(openai_falso):
+    return [
+        next((nombre for nombre, cita in CITAS.items() if cita in p["enviado"]), None)
+        for p in openai_falso.peticiones
+    ]
+
+
+def test_si_se_interrumpe_en_el_tercer_nombre_quedan_guardados_los_insights_de_los_dos_primeros(
+    tmp_path,
+):
+    interrumpida(tmp_path)
+
+    guardados = leer(tmp_path, 12, "insights_normalizados.json")
+    assert [(i["nombre_transcrito"], i["jugador_id"]) for i in guardados] == [
+        ("Rafiña", "411295"),
+        ("Chamenamení", "413112"),
+    ]
+
+
+def test_si_se_interrumpe_en_el_tercer_nombre_queda_guardado_el_eliminado_antes(tmp_path):
+    interrumpida(tmp_path, chamenameni=None)
+
+    assert leer(tmp_path, 12, "nombres_eliminados.json") == [
+        {"nombre": "Chamenamení", "quote": "Segunda cita", "motivo": "sin_coincidencia"}
+    ]
+
+
+def test_tras_una_interrupcion_la_siguiente_ejecucion_solo_consulta_el_nombre_que_faltaba(
+    tmp_path,
+):
+    interrumpida(tmp_path)
+    openai_falso = OpenAIFalso(respuestas())
+
+    resolver_tres(tmp_path, openai_falso)
+
+    assert consultados(openai_falso) == ["Pedri"]
+
+
+def test_reanudar_tras_una_interrupcion_da_lo_mismo_que_una_ejecucion_sin_interrumpir(tmp_path):
+    interrumpida(tmp_path / "interrumpida", chamenameni=None)
+    reanudado = resolver_tres(tmp_path / "interrumpida", OpenAIFalso(respuestas(chamenameni=None)))
+    seguido = resolver_tres(tmp_path / "seguida", OpenAIFalso(respuestas(chamenameni=None)))
+
+    def ficheros(datos_dir):
+        return {nombre: leer(datos_dir, 12, nombre) for nombre in FICHEROS}
+
+    assert (reanudado, ficheros(tmp_path / "interrumpida")) == (
+        seguido,
+        ficheros(tmp_path / "seguida"),
+    )
+
+
+def test_si_se_interrumpe_en_el_primer_nombre_los_ficheros_que_quedan_son_listas_json(tmp_path):
+    interrumpida(tmp_path, interrumpe_en="Rafiña")
+
+    carpeta = tmp_path / "2026" / "j12"
+    existentes = [carpeta / nombre for nombre in FICHEROS if (carpeta / nombre).exists()]
+    assert {
+        fichero.name: isinstance(json.loads(fichero.read_text(encoding="utf-8")), list)
+        for fichero in existentes
+    } == {fichero.name: True for fichero in existentes}
+
+
+def test_si_se_interrumpe_en_el_primer_nombre_la_siguiente_ejecucion_consulta_los_tres(tmp_path):
+    interrumpida(tmp_path, interrumpe_en="Rafiña")
+    openai_falso = OpenAIFalso(respuestas())
+
+    resolver_tres(tmp_path, openai_falso)
+
+    assert consultados(openai_falso) == ["Rafiña", "Chamenamení", "Pedri"]
+
+
+def test_un_nombre_con_error_api_antes_de_la_interrupcion_se_vuelve_a_consultar(tmp_path):
+    interrumpida(tmp_path, error_api_en="Rafiña")
+    openai_falso = OpenAIFalso(respuestas())
+
+    resolver_tres(tmp_path, openai_falso)
+
+    assert consultados(openai_falso) == ["Rafiña", "Pedri"]
