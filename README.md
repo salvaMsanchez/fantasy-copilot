@@ -104,6 +104,7 @@ Un fichero JSON con la lista de jugadores de tu equipo, como `plantilla.ejemplo.
 
 - **Transcripciones:** proceden de vídeos públicos de YouTube de los canales de análisis [Carrasco](https://www.youtube.com/channel/UCu7ZOzCUgWpvvJzYAdnw0_Q) y [Jornada Perfecta](https://www.youtube.com/channel/UCvMw41zGXyYYPDvyXcHZfug). Cada insight guarda el enlace al vídeo del que sale.
 - **Jugadores:** la lista oficial de jugadores de LaLiga procede de [Transfermarkt](https://www.transfermarkt.es), una vez por temporada y con pausas entre peticiones.
+- **Puntos:** los puntos de LaLiga Fantasy de cada jornada, para evaluar las recomendaciones, proceden de [futbolfantasy.com](https://www.futbolfantasy.com), con una sola petición por jornada que se guarda para no repetirla.
 - **Uso:** educativo y no comercial, dentro de un programa de formación. No se cobra por nada.
 - **Sin redistribución:** el repositorio no incluye transcripciones ni datos descargados; cada uno los obtiene al ejecutar la ingesta, y quedan en `datos/`, excluida de git.
 - **Autoría:** los análisis y opiniones son de sus creadores. Este proyecto solo los resume y enlaza a los vídeos originales.
