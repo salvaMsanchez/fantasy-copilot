@@ -21,7 +21,7 @@ def cargar_plantilla(ruta: Path, jugadores: list[dict]) -> list[dict]:
 
     por_nombre = {}
     for jugador in jugadores:
-        por_nombre.setdefault(_clave(jugador["nombre"]), []).append(jugador)
+        por_nombre.setdefault(clave_nombre(jugador["nombre"]), []).append(jugador)
 
     plantilla = []
     vistos = set()
@@ -32,7 +32,7 @@ def cargar_plantilla(ruta: Path, jugadores: list[dict]) -> list[dict]:
                 f"La posición de {nombre} es {posicion!r} y debe ser una de: "
                 + ", ".join(POSICIONES)
             )
-        coincidencias = por_nombre.get(_clave(nombre), [])
+        coincidencias = por_nombre.get(clave_nombre(nombre), [])
         if not coincidencias:
             raise ErrorPlantilla(f"{nombre} no está en la lista oficial de jugadores")
         if len(coincidencias) > 1:
@@ -71,7 +71,7 @@ def _leer(ruta: Path) -> list[dict]:
     return entradas
 
 
-def _clave(nombre: str) -> str:
+def clave_nombre(nombre: str) -> str:
     sin_marcas = "".join(
         caracter
         for caracter in unicodedata.normalize("NFKD", nombre)
