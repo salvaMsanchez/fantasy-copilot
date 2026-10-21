@@ -5,6 +5,7 @@ from openai import OpenAIError
 
 UMBRAL_CONFIANZA = 0.4
 TOP_K = 10
+PREGUNTA = "¿Qué dicen los expertos sobre {nombre} en fantasy football?"
 TAMANO_ONCE = 11
 INTENTOS = 3
 ESPERA_ENTRE_INTENTOS = 1
@@ -108,7 +109,7 @@ def recomendar_once(
         insights = [
             insight
             for insight in indice.consultar(
-                f"¿Qué dicen los expertos sobre {jugador['nombre']} en fantasy football?",
+                PREGUNTA.format(nombre=jugador["nombre"]),
                 jornada=jornada,
                 temporada=temporada,
                 top_k=TOP_K,
