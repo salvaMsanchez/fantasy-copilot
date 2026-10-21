@@ -265,6 +265,67 @@ def test_una_ficha_con_una_letra_no_acentuada_de_menos_queda_sin_asociar(tmp_pat
     )
 
 
+def test_una_ficha_con_un_nombre_de_mas_que_la_lista_oficial_se_asocia_a_su_jugador(tmp_path):
+    html = pagina_con(
+        bloque("Betis", fila("Isco", "isco-alarcon", "18")),
+        bloque("Barcelona", fila("Pedri", "pedri-gonzalez", "7")),
+    )
+    web = FutbolFantasyFalso({URL_J8_2026: html})
+    isco = oficial("900", "Isco", "Real Betis Balompié")
+    pedri = oficial("901", "Pedri", "FC Barcelona")
+
+    resultado = obtener(web, tmp_path, jugadores=[*LISTA_OFICIAL, isco, pedri])
+
+    assert por_id(resultado) == {
+        "900": {"jugador_id": "900", "nombre": "Isco", "puntos": 18},
+        "901": {"jugador_id": "901", "nombre": "Pedri", "puntos": 7},
+    }
+
+
+def test_una_ficha_con_un_nombre_de_menos_que_la_lista_oficial_se_asocia_a_su_jugador(tmp_path):
+    web = FutbolFantasyFalso(
+        {URL_J8_2026: pagina_con(bloque("Getafe", fila("Terrats", "terrats", "5")))}
+    )
+    terrats = oficial("910", "Ramón Terrats", "Getafe CF")
+
+    resultado = obtener(web, tmp_path, jugadores=[*LISTA_OFICIAL, terrats])
+
+    assert resultado["puntos"] == [{"jugador_id": "910", "nombre": "Ramón Terrats", "puntos": 5}]
+
+
+def test_una_ficha_que_contiene_el_nombre_oficial_no_se_asocia_si_el_nombre_corto_lo_contradice(
+    tmp_path,
+):
+    web = FutbolFantasyFalso(
+        {URL_J8_2026: pagina_con(bloque("Málaga", fila("Céspedes", "andres-cespedes", "4")))}
+    )
+    andres = oficial("920", "Andrés", "Málaga CF")
+
+    resultado = obtener(web, tmp_path, jugadores=[*LISTA_OFICIAL, andres])
+
+    assert (resultado["puntos"], resultado["sin_asociar"]) == (
+        [],
+        [{"nombre": "andres cespedes", "equipo": "Málaga", "puntos": 4}],
+    )
+
+
+def test_una_ficha_con_un_nombre_de_menos_que_encaja_con_dos_jugadores_del_equipo_queda_sin_asociar(
+    tmp_path,
+):
+    web = FutbolFantasyFalso(
+        {URL_J8_2026: pagina_con(bloque("Getafe", fila("Terrats", "terrats", "5")))}
+    )
+    ramon = oficial("910", "Ramón Terrats", "Getafe CF")
+    pau = oficial("911", "Pau Terrats", "Getafe CF")
+
+    resultado = obtener(web, tmp_path, jugadores=[*LISTA_OFICIAL, ramon, pau])
+
+    assert (resultado["puntos"], resultado["sin_asociar"]) == (
+        [],
+        [{"nombre": "terrats", "equipo": "Getafe", "puntos": 5}],
+    )
+
+
 def test_con_dos_equipos_que_encajan_con_el_nombre_corto_cada_bloque_va_a_su_equipo(tmp_path):
     html = pagina_con(
         bloque("Deportivo", fila("Lucas Pérez", "lucas-perez", "8")),

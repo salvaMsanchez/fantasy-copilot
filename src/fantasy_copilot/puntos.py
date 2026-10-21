@@ -62,10 +62,10 @@ def obtener_puntos(
     if not inicios:
         raise ErrorPuntos(f"La página de {nombre_jornada} no trae la fecha de ningún partido")
 
-    equipos = _equipos_oficiales({equipo for equipo, _, _ in filas}, jugadores)
+    equipos = _equipos_oficiales({equipo for equipo, _, _, _ in filas}, jugadores)
     puntos, sin_asociar = [], []
-    for equipo, ficha, valor in filas:
-        jugador = _asociar(ficha, equipos[equipo], jugadores)
+    for equipo, ficha, nombre_corto, valor in filas:
+        jugador = _asociar(ficha, nombre_corto, equipos[equipo], jugadores)
         if jugador:
             puntos.append(
                 {"jugador_id": jugador["id"], "nombre": jugador["nombre"], "puntos": valor}
@@ -84,7 +84,7 @@ def obtener_puntos(
     return {**resultado, "provisional": provisional}
 
 
-def _extraer_filas(pagina: BeautifulSoup) -> list[tuple[str, str, int]]:
+def _extraer_filas(pagina: BeautifulSoup) -> list[tuple[str, str, str, int]]:
     filas = []
     equipo = None
     for elemento in pagina.find_all(["h2", "tr"]):
@@ -103,8 +103,16 @@ def _extraer_filas(pagina: BeautifulSoup) -> list[tuple[str, str, int]]:
             continue
         texto = casilla.get_text(strip=True)
         valor = int(texto) if re.fullmatch(r"-?\d+", texto) else 0
-        filas.append((equipo, ficha.group(1), valor))
+        filas.append((equipo, ficha.group(1), _nombre_corto(elemento), valor))
     return filas
+
+
+def _nombre_corto(fila) -> str:
+    celda = fila.select_one("td.name")
+    if celda is None:
+        return ""
+    # Solo el texto propio de la celda: el minuto de un cambio va en un span aparte.
+    return " ".join(celda.find_all(string=True, recursive=False)).strip()
 
 
 def _extraer_inicios(pagina: BeautifulSoup) -> list[datetime]:
@@ -137,14 +145,40 @@ def _equipos_oficiales(de_la_pagina: set[str], jugadores: list[dict]) -> dict[st
     }
 
 
-def _asociar(ficha: str, equipos: set[str], jugadores: list[dict]) -> dict | None:
+def _asociar(
+    ficha: str, nombre_corto: str, equipos: set[str], jugadores: list[dict]
+) -> dict | None:
     candidatos = [j for j in jugadores if equipos & set(j.get("equipos") or [j["equipo"]])]
     # Las fichas pueden acabar en un número que distingue a homónimos ("jesus-martinez-1").
     palabras_ficha = [palabra for palabra in _palabras(ficha) if not palabra.isdigit()]
     exactos = [
         j for j in candidatos if _mismas_palabras(palabras_ficha, _palabras(j["nombre"], True))
     ]
-    return exactos[0] if len(exactos) == 1 else None
+    if exactos:
+        return exactos[0] if len(exactos) == 1 else None
+    # Una ficha con un nombre de más ("isco-alarcon") o de menos ("terrats") solo vale si el
+    # nombre corto de la página está en el nombre oficial ("Céspedes" descarta a "Andrés").
+    palabras_cortas = _palabras(nombre_corto)
+    if not palabras_cortas:
+        return None
+    parciales = [
+        j
+        for j in candidatos
+        if _una_contiene_a_otra(palabras_ficha, _palabras(j["nombre"], True))
+        and _contenidas(palabras_cortas, _palabras(j["nombre"], True))
+    ]
+    return parciales[0] if len(parciales) == 1 else None
+
+
+def _una_contiene_a_otra(de_ficha: list[str], oficiales: list[str]) -> bool:
+    return bool(de_ficha and oficiales) and (
+        _contenidas(de_ficha, oficiales)
+        or all(any(_misma_palabra(f, o) for f in de_ficha) for o in oficiales)
+    )
+
+
+def _contenidas(de_ficha: list[str], oficiales: list[str]) -> bool:
+    return all(any(_misma_palabra(f, o) for o in oficiales) for f in de_ficha)
 
 
 def _mismas_palabras(de_ficha: list[str], oficiales: list[str]) -> bool:
