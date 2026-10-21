@@ -166,7 +166,7 @@ def normalizar_insights(
     for nombre in pendientes:
         cita = citas[nombre]
         try:
-            jugador_id = _consultar(nombre, cita, jugadores, modelo=modelo, cliente=cliente)
+            jugador_id = resolver_nombre(nombre, cita, jugadores, modelo=modelo, cliente=cliente)
         except (OpenAIError, ValueError, TypeError, KeyError):
             eliminados[nombre] = {"nombre": nombre, "quote": cita, "motivo": "error_api"}
         else:
@@ -220,7 +220,7 @@ def _candidatos(nombre: str, jugadores: list[dict]) -> list[dict]:
     return list(candidatos.values())
 
 
-def _consultar(nombre: str, cita: str, jugadores: list[dict], *, modelo: str, cliente):
+def resolver_nombre(nombre: str, cita: str, jugadores: list[dict], *, modelo: str, cliente):
     peticion = {
         "nombre_transcrito": nombre,
         "cita": cita or "No disponible",
