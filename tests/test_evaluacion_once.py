@@ -237,6 +237,30 @@ def test_en_la_eleccion_simple_un_empate_lo_gana_el_que_va_antes_en_la_plantilla
     assert resultado["eleccion_simple"]["puntos"] == 2
 
 
+def escribir_jornadas_anteriores(datos_dir):
+    escribir_puntos(datos_dir, 10, PUNTOS)
+    escribir_puntos(datos_dir, 11, PUNTOS)
+
+
+def test_sin_los_puntos_de_la_jornada_evaluada_el_error_nombra_jornada_y_temporada(tmp_path):
+    escribir_jornadas_anteriores(tmp_path)
+
+    with pytest.raises(Exception) as error:
+        evaluar(tmp_path)
+
+    assert "12" in str(error.value) and "2026" in str(error.value)
+
+
+def test_sin_los_puntos_de_la_jornada_evaluada_no_se_pide_la_recomendacion(tmp_path):
+    escribir_jornadas_anteriores(tmp_path)
+    cliente = cliente_con(ONCE_RECOMENDADO)
+
+    with pytest.raises(Exception) as error:
+        evaluar(tmp_path, cliente=cliente)
+
+    assert cliente.peticiones == [], error.value
+
+
 def test_una_plantilla_sin_formacion_valida_da_error_sin_pedir_la_recomendacion(tmp_path):
     plantilla = plantilla_de(
         defensas=["d1", "d2", "d3", "d4", "d5"],
