@@ -55,16 +55,25 @@ def url_puntos(anio_fin, jornada):
 URL_J8_2026 = url_puntos(2027, 8)
 
 
-def fila(nombre_corto, ficha, puntos, comunio="4", comunio_primero=False):
+def fila(nombre_corto, ficha, puntos, comunio="4", comunio_primero=False, cambio=None):
+    """`cambio` es `(tipo, minuto)`, p. ej. `("Entrada", "61'")`, si el jugador entra o sale."""
     caja = "racha-box columna_puntos mx-auto point"
     laliga = f'<span class="{caja} high laliga-fantasy ">{puntos}</span>'
     otro = f'<span class="{caja} low comunio scale2">{comunio}</span>'
     spans = otro + laliga if comunio_primero else laliga + otro
+    icono = ""
+    if cambio:
+        tipo, minuto = cambio
+        archivo = "icono_entra.png" if tipo == "Entrada" else "icono_sale.png"
+        icono = (
+            f'\n    <img title="{tipo}" alt="{tipo}" src="{archivo}">'
+            f' <span class="minuto">{minuto}</span>'
+        )
     return f"""
 <tr class="plegado plegable">
   <td class="name" data-posicion-laliga-fantasy="Delantero">
     <i class="fa fa-plus desplegar" aria-hidden="true"></i>
-    <i class="fa fa-minus plegar" aria-hidden="true"></i> {nombre_corto}
+    <i class="fa fa-minus plegar" aria-hidden="true"></i> {nombre_corto}{icono}
   </td>
   <td class="data bold d-flex">
     {spans}
@@ -299,6 +308,43 @@ def test_una_ficha_que_contiene_el_nombre_oficial_no_se_asocia_si_el_nombre_cort
     web = FutbolFantasyFalso(
         {URL_J8_2026: pagina_con(bloque("Málaga", fila("Céspedes", "andres-cespedes", "4")))}
     )
+    andres = oficial("920", "Andrés", "Málaga CF")
+
+    resultado = obtener(web, tmp_path, jugadores=[*LISTA_OFICIAL, andres])
+
+    assert (resultado["puntos"], resultado["sin_asociar"]) == (
+        [],
+        [{"nombre": "andres cespedes", "equipo": "Málaga", "puntos": 4}],
+    )
+
+
+def test_el_minuto_de_salida_no_impide_asociar_una_ficha_con_un_nombre_de_mas(tmp_path):
+    html = pagina_con(bloque("Betis", fila("Isco", "isco-alarcon", "18", cambio=("Salida", "75'"))))
+    web = FutbolFantasyFalso({URL_J8_2026: html})
+    isco = oficial("900", "Isco", "Real Betis Balompié")
+
+    resultado = obtener(web, tmp_path, jugadores=[*LISTA_OFICIAL, isco])
+
+    assert resultado["puntos"] == [{"jugador_id": "900", "nombre": "Isco", "puntos": 18}]
+
+
+def test_el_minuto_de_entrada_no_impide_asociar_una_ficha_con_un_nombre_de_menos(tmp_path):
+    html = pagina_con(bloque("Getafe", fila("Terrats", "terrats", "5", cambio=("Entrada", "61'"))))
+    web = FutbolFantasyFalso({URL_J8_2026: html})
+    terrats = oficial("910", "Ramón Terrats", "Getafe CF")
+
+    resultado = obtener(web, tmp_path, jugadores=[*LISTA_OFICIAL, terrats])
+
+    assert resultado["puntos"] == [{"jugador_id": "910", "nombre": "Ramón Terrats", "puntos": 5}]
+
+
+def test_con_minuto_de_entrada_el_nombre_corto_que_contradice_la_ficha_sigue_dejandola_sin_asociar(
+    tmp_path,
+):
+    html = pagina_con(
+        bloque("Málaga", fila("Céspedes", "andres-cespedes", "4", cambio=("Entrada", "46'")))
+    )
+    web = FutbolFantasyFalso({URL_J8_2026: html})
     andres = oficial("920", "Andrés", "Málaga CF")
 
     resultado = obtener(web, tmp_path, jugadores=[*LISTA_OFICIAL, andres])
