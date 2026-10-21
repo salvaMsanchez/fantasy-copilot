@@ -34,7 +34,7 @@ class Indice:
                 f"{len(sin_normalizar)} insights no tienen jugador_id: "
                 "solo se indexan insights normalizados"
             )
-        por_id = {_identificador(insight): insight for insight in insights}
+        por_id = {identificador(insight): insight for insight in insights}
         if not por_id:
             return
         textos = [_texto(insight) for insight in por_id.values()]
@@ -54,8 +54,9 @@ class Indice:
             where={"$and": [{"jornada": jornada}, {"temporada": temporada}]},
         )
         return [
-            {"texto": texto, "metadatos": metadatos, "distancia": distancia}
-            for texto, metadatos, distancia in zip(
+            {"id": id_, "texto": texto, "metadatos": metadatos, "distancia": distancia}
+            for id_, texto, metadatos, distancia in zip(
+                resultados["ids"][0],
                 resultados["documents"][0],
                 resultados["metadatas"][0],
                 resultados["distances"][0],
@@ -73,7 +74,7 @@ class Indice:
         return vectores
 
 
-def _identificador(insight: dict) -> str:
+def identificador(insight: dict) -> str:
     contenido = json.dumps(insight, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(contenido.encode("utf-8")).hexdigest()
 

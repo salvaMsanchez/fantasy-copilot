@@ -7,6 +7,8 @@ from pathlib import Path
 
 from openai import OpenAIError
 
+from fantasy_copilot.agente import PREGUNTA, TOP_K
+from fantasy_copilot.indice import identificador
 from fantasy_copilot.insights import ACCIONES, extraer_insights
 from fantasy_copilot.normalizacion import resolver_nombre
 from fantasy_copilot.plantilla import clave_nombre
@@ -16,6 +18,10 @@ CAMPOS_TEXTO = (*CAMPOS_VIDEO, "chunk", "texto")
 
 
 class ErrorConjunto(Exception):
+    pass
+
+
+class ErrorJornadaSinIngerir(Exception):
     pass
 
 
@@ -110,6 +116,69 @@ def evaluar_extraccion(*, datos_dir: Path, modelo: str, cliente, esperar=time.sl
         "cobertura": _fraccion(correctos, correctos + omitidos),
         "textos": detalle,
     }
+
+
+def evaluar_recuperacion(
+    plantilla: list[dict], *, jornada: int, temporada: int, datos_dir: Path, indice
+) -> dict:
+    fichero = Path(datos_dir) / str(temporada) / f"j{jornada:02d}" / "insights_normalizados.json"
+    if not fichero.exists():
+        raise ErrorJornadaSinIngerir(
+            f"No hay datos de la jornada {jornada} de la temporada {temporada}: ejecuta antes "
+            f"fantasy-copilot ingesta --jornada {jornada} --temporada {temporada}"
+        )
+    insights = json.loads(fichero.read_text(encoding="utf-8"))
+    indice.indexar(insights)
+
+    detalle = []
+    for jugador in plantilla:
+        relevantes = {
+            identificador(insight)
+            for insight in insights
+            if insight["jugador_id"] == jugador["jugador_id"]
+        }
+        if not relevantes:
+            detalle.append(
+                {
+                    "jugador": jugador["nombre"],
+                    "jugador_id": jugador["jugador_id"],
+                    "precision": None,
+                    "cobertura": None,
+                    "sin_insights": True,
+                }
+            )
+            continue
+        recuperados = [
+            resultado["id"]
+            for resultado in indice.consultar(
+                PREGUNTA.format(nombre=jugador["nombre"]),
+                jornada=jornada,
+                temporada=temporada,
+                top_k=TOP_K,
+            )
+        ]
+        detalle.append(
+            {
+                "jugador": jugador["nombre"],
+                "jugador_id": jugador["jugador_id"],
+                "precision": _fraccion(
+                    sum(id_ in relevantes for id_ in recuperados), len(recuperados)
+                ),
+                "cobertura": _fraccion(len(relevantes & set(recuperados)), len(relevantes)),
+                "sin_insights": False,
+            }
+        )
+
+    return {
+        "precision": _media(jugador["precision"] for jugador in detalle),
+        "cobertura": _media(jugador["cobertura"] for jugador in detalle),
+        "jugadores": detalle,
+    }
+
+
+def _media(valores) -> float | None:
+    presentes = [valor for valor in valores if valor is not None]
+    return sum(presentes) / len(presentes) if presentes else None
 
 
 def _recuento_insights(insights: list[dict]) -> Counter:
