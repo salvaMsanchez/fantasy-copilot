@@ -7,14 +7,17 @@ from pathlib import Path
 
 from openai import OpenAIError
 
-from fantasy_copilot.agente import PREGUNTA, TOP_K
+from fantasy_copilot.agente import PREGUNTA, TAMANO_ONCE, TOP_K, recomendar_once
 from fantasy_copilot.indice import identificador
 from fantasy_copilot.insights import ACCIONES, extraer_insights
 from fantasy_copilot.normalizacion import resolver_nombre
-from fantasy_copilot.plantilla import clave_nombre
+from fantasy_copilot.plantilla import POSICIONES, ErrorPlantilla, clave_nombre
+from fantasy_copilot.puntos import ErrorPuntos
 from fantasy_copilot.textos import CAMPOS_VIDEO
 
 CAMPOS_TEXTO = (*CAMPOS_VIDEO, "chunk", "texto")
+# Jugadores por posición, en el orden de POSICIONES.
+FORMACIONES = ((1, 4, 3, 3), (1, 4, 4, 2))
 
 
 class ErrorConjunto(Exception):
@@ -174,6 +177,110 @@ def evaluar_recuperacion(
         "cobertura": _media(jugador["cobertura"] for jugador in detalle),
         "jugadores": detalle,
     }
+
+
+def evaluar_once(
+    plantilla: list[dict],
+    *,
+    jornada: int,
+    temporada: int,
+    datos_dir: Path,
+    indice,
+    modelo: str,
+    cliente,
+    esperar=time.sleep,
+) -> dict:
+    if not _formaciones_posibles(plantilla):
+        raise ErrorPlantilla(
+            "La plantilla no permite ninguna formación válida "
+            "(1 portero, 4 defensas, 3 o 4 centrocampistas y 2 o 3 delanteros)"
+        )
+    puntos = _leer_puntos(Path(datos_dir), jornada, temporada)
+    if puntos is None:
+        raise ErrorPuntos(
+            f"No hay puntos guardados de la jornada {jornada} de la temporada {temporada}"
+        )
+
+    once = recomendar_once(
+        plantilla,
+        jornada=jornada,
+        temporada=temporada,
+        indice=indice,
+        modelo=modelo,
+        cliente=cliente,
+        esperar=esperar,
+    )["recomendacion"]["once_recomendado"]
+    nombres = [jugador["jugador"] for jugador in once]
+    por_nombre = {jugador["nombre"]: jugador["jugador_id"] for jugador in plantilla}
+    elegidos = [por_nombre[nombre] for nombre in dict.fromkeys(nombres) if nombre in por_nombre]
+    recomendado = {
+        "jugadores": elegidos,
+        "puntos": _suma(elegidos, puntos),
+        "valido": len(nombres) == TAMANO_ONCE and len(elegidos) == TAMANO_ONCE,
+    }
+
+    mejor = _mejor_once(plantilla, puntos)
+    mejor["puntos"] = _suma(mejor["jugadores"], puntos)
+
+    anteriores = [
+        previos
+        for previa in range(1, jornada)
+        if (previos := _leer_puntos(Path(datos_dir), previa, temporada)) is not None
+    ]
+    eleccion_simple = None
+    if anteriores:
+        medias = {
+            jugador["jugador_id"]: sum(p.get(jugador["jugador_id"], 0) for p in anteriores)
+            / len(anteriores)
+            for jugador in plantilla
+        }
+        eleccion_simple = _mejor_once(plantilla, medias)
+        eleccion_simple["puntos"] = _suma(eleccion_simple["jugadores"], puntos)
+
+    return {
+        "recomendado": recomendado,
+        "mejor_once": mejor,
+        "eleccion_simple": eleccion_simple,
+        "proporcion": recomendado["puntos"] / mejor["puntos"] if mejor["puntos"] > 0 else None,
+    }
+
+
+def _formaciones_posibles(plantilla: list[dict]) -> list[tuple[int, ...]]:
+    disponibles = Counter(jugador["posicion"] for jugador in plantilla)
+    return [
+        formacion
+        for formacion in FORMACIONES
+        if all(
+            disponibles[posicion] >= n for posicion, n in zip(POSICIONES, formacion, strict=True)
+        )
+    ]
+
+
+def _mejor_once(plantilla: list[dict], valor: dict[str, float]) -> dict:
+    # El orden estable de sorted deja antes, en los empates, al que va antes en la plantilla.
+    ordenados = sorted(plantilla, key=lambda jugador: -valor.get(jugador["jugador_id"], 0))
+    candidatos = []
+    for formacion in _formaciones_posibles(plantilla):
+        jugadores = [
+            jugador["jugador_id"]
+            for posicion, n in zip(POSICIONES, formacion, strict=True)
+            for jugador in [j for j in ordenados if j["posicion"] == posicion][:n]
+        ]
+        candidatos.append((sum(valor.get(i, 0) for i in jugadores), formacion, jugadores))
+    _, formacion, jugadores = max(candidatos, key=lambda candidato: candidato[0])
+    return {"formacion": "-".join(map(str, formacion)), "jugadores": jugadores}
+
+
+def _leer_puntos(datos_dir: Path, jornada: int, temporada: int) -> dict[str, int] | None:
+    fichero = datos_dir / str(temporada) / f"j{jornada:02d}" / "puntos.json"
+    if not fichero.exists():
+        return None
+    contenido = json.loads(fichero.read_text(encoding="utf-8"))
+    return {fila["jugador_id"]: fila["puntos"] for fila in contenido["puntos"]}
+
+
+def _suma(jugadores: list[str], puntos: dict[str, int]) -> int:
+    return sum(puntos.get(jugador_id, 0) for jugador_id in jugadores)
 
 
 def _media(valores) -> float | None:
