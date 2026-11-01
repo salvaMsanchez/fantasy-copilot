@@ -104,6 +104,7 @@ def recomendar_once(
     esperar=time.sleep,
 ) -> dict:
     resumenes = []
+    contextos = []
     avisos = []
     for jugador in plantilla:
         insights = [
@@ -118,12 +119,13 @@ def recomendar_once(
         ]
         if not insights:
             resumenes.append(_sin_datos(jugador))
+            contextos.append([])
             continue
         try:
             resumenes.append(
                 _pedir(
                     INSTRUCCIONES_RESUMEN,
-                    _peticion_resumen(jugador, jornada, insights),
+                    _peticion_resumen(jugador, jornada, contexto := _contexto(insights)),
                     ESQUEMA_RESUMEN,
                     MAXIMO_TOKENS_RESUMEN,
                     TEMPERATURA_RESUMEN,
@@ -132,8 +134,10 @@ def recomendar_once(
                     esperar=esperar,
                 )
             )
+            contextos.append(contexto)
         except _PeticionFallida as error:
             resumenes.append(_sin_datos(jugador))
+            contextos.append([])
             avisos.append(f"No se pudo resumir a {jugador['nombre']}: {error}")
 
     peticion = json.dumps(
@@ -157,7 +161,7 @@ def recomendar_once(
 
     avisos.extend(_avisos_del_once(recomendacion["once_recomendado"], plantilla))
     recomendacion["advertencias"] = [*recomendacion["advertencias"], *avisos]
-    return {"resumenes": resumenes, "recomendacion": recomendacion}
+    return {"resumenes": resumenes, "insights": contextos, "recomendacion": recomendacion}
 
 
 class _PeticionFallida(Exception):
@@ -175,22 +179,26 @@ def _sin_datos(jugador: dict) -> dict:
     }
 
 
-def _peticion_resumen(jugador: dict, jornada: int, insights: list[dict]) -> str:
+def _contexto(insights: list[dict]) -> list[dict]:
+    return [
+        {
+            "accion": insight["metadatos"]["accion"],
+            "confianza": insight["metadatos"]["confianza"],
+            "canal": insight["metadatos"]["canal"],
+            "jornada": insight["metadatos"]["jornada"],
+            "texto": insight["texto"],
+        }
+        for insight in insights
+    ]
+
+
+def _peticion_resumen(jugador: dict, jornada: int, contexto: list[dict]) -> str:
     return json.dumps(
         {
             "jugador": jugador["nombre"],
             "posicion": jugador["posicion"],
             "jornada": jornada,
-            "insights": [
-                {
-                    "accion": insight["metadatos"]["accion"],
-                    "confianza": insight["metadatos"]["confianza"],
-                    "canal": insight["metadatos"]["canal"],
-                    "jornada": insight["metadatos"]["jornada"],
-                    "texto": insight["texto"],
-                }
-                for insight in insights
-            ],
+            "insights": contexto,
         },
         ensure_ascii=False,
         indent=2,
