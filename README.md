@@ -116,7 +116,7 @@ Un fichero JSON con la lista de jugadores de tu equipo, como `plantilla.ejemplo.
 ## Desarrollo
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev,eval]"
 python -m pytest
 ruff check src tests
 ```

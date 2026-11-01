@@ -1,4 +1,6 @@
+import asyncio
 import json
+import math
 import tempfile
 import time
 from collections import Counter
@@ -18,6 +20,7 @@ from fantasy_copilot.textos import CAMPOS_VIDEO
 CAMPOS_TEXTO = (*CAMPOS_VIDEO, "chunk", "texto")
 # Jugadores por posición, en el orden de POSICIONES.
 FORMACIONES = ((1, 4, 3, 3), (1, 4, 4, 2))
+MAXIMO_TOKENS_JUEZ = 4096
 
 
 class ErrorConjunto(Exception):
@@ -277,6 +280,90 @@ def _leer_puntos(datos_dir: Path, jornada: int, temporada: int) -> dict[str, int
         return None
     contenido = json.loads(fichero.read_text(encoding="utf-8"))
     return {fila["jugador_id"]: fila["puntos"] for fila in contenido["puntos"]}
+
+
+def crear_juez(modelo: str, cliente_asincrono):
+    from ragas.llms import llm_factory
+
+    juez = llm_factory(modelo, client=cliente_asincrono)
+    # RAGAS 0.4.3 manda max_tokens a modelos como gpt-5.4-mini, que solo aceptan
+    # max_completion_tokens: no reconoce las versiones con punto como de razonamiento.
+    juez.model_args.pop("max_tokens", None)
+    juez.model_args["max_completion_tokens"] = MAXIMO_TOKENS_JUEZ
+    return juez
+
+
+def evaluar_fidelidad(recomendacion: dict, *, juez) -> dict:
+    jugadores = asyncio.run(
+        _juzgar_resumenes(recomendacion["resumenes"], recomendacion["insights"], juez)
+    )
+    return {
+        "media": _media(jugador["fidelidad"] for jugador in jugadores),
+        "jugadores": jugadores,
+    }
+
+
+async def _juzgar_resumenes(resumenes: list[dict], contextos: list[list[dict]], juez) -> list:
+    from ragas.metrics.collections import Faithfulness
+
+    anotador = _juez_que_anota(juez)
+    metrica = Faithfulness(llm=anotador)
+    jugadores = []
+    for resumen, contexto in zip(resumenes, contextos, strict=True):
+        detalle = {
+            "jugador": resumen["jugador"],
+            "resumen": resumen["resumen"],
+            "fidelidad": None,
+            "no_respaldadas": [],
+            "estado": "juzgado",
+            "error": None,
+        }
+        jugadores.append(detalle)
+        if not contexto or not resumen["resumen"]:
+            detalle["estado"] = "sin_datos"
+            continue
+        anotador.veredictos = None
+        try:
+            resultado = await metrica.ascore(
+                user_input=PREGUNTA.format(nombre=resumen["jugador"]),
+                response=resumen["resumen"],
+                retrieved_contexts=[json.dumps(i, ensure_ascii=False) for i in contexto],
+            )
+        # El juez pasa por instructor y OpenAI, que lanzan excepciones de varios tipos.
+        except Exception as error:
+            detalle["estado"] = "error"
+            detalle["error"] = f"{type(error).__name__}: {error}"
+            continue
+        if not math.isnan(resultado.value):
+            detalle["fidelidad"] = resultado.value
+        if anotador.veredictos is not None:
+            detalle["no_respaldadas"] = [
+                {"afirmacion": veredicto.statement, "motivo": veredicto.reason}
+                for veredicto in anotador.veredictos.statements
+                if not veredicto.verdict
+            ]
+    return jugadores
+
+
+def _juez_que_anota(juez):
+    """Envuelve al juez para guardar sus veredictos, que la métrica no devuelve."""
+    from ragas.llms.base import InstructorBaseRagasLLM
+    from ragas.metrics.collections.faithfulness.util import NLIStatementOutput
+
+    class JuezQueAnota(InstructorBaseRagasLLM):
+        def __init__(self):
+            self.veredictos = None
+
+        def generate(self, prompt, response_model):
+            return juez.generate(prompt, response_model)
+
+        async def agenerate(self, prompt, response_model):
+            respuesta = await juez.agenerate(prompt, response_model)
+            if response_model is NLIStatementOutput:
+                self.veredictos = respuesta
+            return respuesta
+
+    return JuezQueAnota()
 
 
 def _suma(jugadores: list[str], puntos: dict[str, int]) -> int:
