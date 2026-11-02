@@ -849,3 +849,95 @@ def test_se_descargan_los_puntos_que_faltan_de_la_jornada_y_las_anteriores_y_no_
     evaluar(capsys, con=servicios(futbolfantasy=web))
 
     assert sorted(web.urls) == [url_puntos(2), url_puntos(3)]
+
+
+# --- Conjuntos de nombres y de recomendación dañados --------------------------------------------
+# Cada uno con lo que debe nombrar el mensaje de error.
+
+DANADOS = [
+    pytest.param(
+        "nombres",
+        {"temporada": TEMPORADA, "nombres": "no es una lista"},
+        [r"nombres\.json"],
+        id="nombres_sin_lista",
+    ),
+    pytest.param(
+        "recomendacion",
+        {"casos": [{"temporada": TEMPORADA, "plantilla": []}]},
+        [r"recomendacion\.json", r"caso\W{0,3}1\b"],
+        id="caso_sin_jornada",
+    ),
+    pytest.param(
+        "recomendacion",
+        {
+            "casos": [
+                {
+                    "temporada": TEMPORADA,
+                    "jornada": 2,
+                    "plantilla": [
+                        *PLANTILLA,
+                        {"nombre": "Jugador Inventado", "posicion": "defensa"},
+                    ],
+                }
+            ]
+        },
+        [r"caso\W{0,3}1\b", r"Jugador Inventado"],
+        id="jugador_fuera_de_la_lista_oficial",
+    ),
+]
+
+
+class OpenAIQueCuenta(OpenAIFalso):
+    """Cuenta todas las peticiones a OpenAI: de chat, de embeddings y del juez de RAGAS."""
+
+    def __init__(self):
+        super().__init__()
+        self.peticiones = 0
+        crear, vectorizar = self._crear, self._embeddings
+        self.chat.completions.create = lambda **p: self._contar(crear, **p)
+        self.embeddings.create = lambda **p: self._contar(vectorizar, **p)
+
+    def _contar(self, peticion, **argumentos):
+        self.peticiones += 1
+        return peticion(**argumentos)
+
+
+class JuezQueCuenta(JuezFalso):
+    def __init__(self, cliente):
+        super().__init__()
+        self.cliente = cliente
+
+    async def agenerate(self, prompt, response_model):
+        self.cliente.peticiones += 1
+        return await super().agenerate(prompt, response_model)
+
+
+@pytest.mark.parametrize("conjunto, contenido, nombrados", DANADOS)
+def test_un_conjunto_de_nombres_o_recomendacion_danado_termina_con_codigo_1_nombrado_y_sin_informe(
+    capsys, datos, conjunto, contenido, nombrados
+):
+    preparar(datos)
+    escribir_conjunto(datos, conjunto, contenido)
+
+    resultado = evaluar(capsys)
+
+    assert resultado.codigo == 1
+    mensaje = resultado.salida + resultado.errores
+    assert [n for n in nombrados if not re.search(n, mensaje, re.IGNORECASE)] == [], mensaje
+    assert informes(datos) == []
+
+
+@pytest.mark.parametrize("conjunto, contenido, nombrados", DANADOS)
+def test_un_conjunto_de_nombres_o_recomendacion_danado_no_hace_ninguna_peticion_a_openai(
+    capsys, datos, conjunto, contenido, nombrados
+):
+    preparar(datos)
+    escribir_conjunto(datos, conjunto, contenido)
+    cliente = OpenAIQueCuenta()
+    con = servicios(cliente=cliente)
+    juez = JuezQueCuenta(cliente)
+    con.juez = lambda clave, modelo: juez
+
+    evaluar(capsys, con=con)
+
+    assert cliente.peticiones == 0
