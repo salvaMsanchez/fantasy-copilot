@@ -318,7 +318,11 @@ async def _juzgar_resumenes(resumenes: list[dict], contextos: list[list[dict]], 
     for resumen, contexto in zip(resumenes, contextos, strict=True):
         detalle = {"jugador": resumen["jugador"], "resumen": resumen["resumen"]}
         jugadores.append(detalle)
-        if not contexto or not resumen["resumen"]:
+        if (
+            not contexto
+            or not resumen["resumen"]
+            or resumen.get("accion_recomendada") == "sin_datos"
+        ):
             detalle.update(fidelidad=None, no_respaldadas=[], estado="sin_datos", error=None)
             continue
         await _juzgar(
