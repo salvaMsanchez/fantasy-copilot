@@ -100,6 +100,37 @@ Un fichero JSON con la lista de jugadores de tu equipo, como `plantilla.ejemplo.
 - `posicion` es la de fantasy: `portero`, `defensa`, `centrocampista` o `delantero`.
 - `nombre` es el de la lista oficial de Transfermarkt. Se compara sin distinguir mayúsculas ni tildes: `"goncalo guedes"` vale por `Gonçalo Guedes`. Si un nombre no está, coincide con dos jugadores o se repite, el comando termina con un mensaje que lo indica.
 
+### 3. Evaluación
+
+```bash
+pip install -e ".[eval]"
+fantasy-copilot evaluar
+```
+
+Mide cada etapa contra conjuntos etiquetados a mano y escribe un informe en `datos/evaluacion/informes/<AAAA-MM-DD>.md` (si se repite el mismo día, lo sustituye). Necesita el extra `eval` (RAGAS) y hace peticiones de pago a OpenAI: extrae los textos, resuelve los nombres, recomienda cada caso y usa el modelo del agente como juez de la fidelidad. También descarga de futbolfantasy.com los puntos que falten de cada jornada evaluada y de las anteriores, y la lista oficial de Transfermarkt si no está.
+
+Los conjuntos van en `datos/evaluacion/`, fuera de git. Basta con uno; los que falten se indican en el informe:
+
+- `nombres.json`: la temporada y los nombres transcritos con su jugador correcto (`null` si no es ningún jugador).
+
+  ```json
+  {"temporada": 2026, "nombres": [{"nombre_transcrito": "Rafiña", "cita": "Rafiña está en un momento brutal", "jugador_id": "411295"}]}
+  ```
+
+- `extraccion.json`: textos de vídeos con los insights que deberían salir de cada uno.
+
+  ```json
+  {"textos": [{"canal": "carrasco", "video_id": "abc123def45", "titulo": "ONCE IDEAL JORNADA 8", "fecha": "2026-10-15", "jornada": 8, "temporada": 2026, "url": "https://www.youtube.com/watch?v=abc123def45", "chunk": 0, "texto": "…", "insights_esperados": [{"jugador": "Pedri", "accion": "alinear"}]}]}
+  ```
+
+- `recomendacion.json`: casos de una jornada ya ingerida y una plantilla con el formato de `--plantilla`. Un caso de una jornada sin ingesta se salta con un aviso.
+
+  ```json
+  {"casos": [{"temporada": 2026, "jornada": 8, "plantilla": [{"nombre": "Augusto Batalla", "posicion": "portero"}]}]}
+  ```
+
+El informe da la precisión y la cobertura de los nombres y de la extracción, el porcentaje de nombres eliminados, la recuperación del índice, los puntos del once recomendado frente al mejor once posible y a una elección simple por media de puntos, la fidelidad de los insights y de los resúmenes, y las afirmaciones que el juez no ve respaldadas.
+
 ## Fuentes de datos y uso
 
 - **Transcripciones:** proceden de vídeos públicos de YouTube de los canales de análisis [Carrasco](https://www.youtube.com/channel/UCu7ZOzCUgWpvvJzYAdnw0_Q) y [Jornada Perfecta](https://www.youtube.com/channel/UCvMw41zGXyYYPDvyXcHZfug). Cada insight guarda el enlace al vídeo del que sale.
