@@ -12,10 +12,18 @@ class ErrorPlantilla(Exception):
 
 
 def cargar_plantilla(ruta: Path, jugadores: list[dict]) -> list[dict]:
-    entradas = _leer(Path(ruta))
+    try:
+        entradas = json.loads(Path(ruta).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        raise ErrorPlantilla(f"No se puede leer la plantilla de {ruta}: {error}") from error
+    return resolver_plantilla(entradas, jugadores, origen=ruta)
+
+
+def resolver_plantilla(entradas, jugadores: list[dict], *, origen) -> list[dict]:
+    _comprobar_formato(entradas, origen)
     if len(entradas) < MINIMO_JUGADORES:
         raise ErrorPlantilla(
-            f"La plantilla de {ruta} tiene {len(entradas)} jugadores y hacen falta "
+            f"La plantilla de {origen} tiene {len(entradas)} jugadores y hacen falta "
             f"al menos {MINIMO_JUGADORES}"
         )
 
@@ -54,11 +62,7 @@ def cargar_plantilla(ruta: Path, jugadores: list[dict]) -> list[dict]:
     return plantilla
 
 
-def _leer(ruta: Path) -> list[dict]:
-    try:
-        entradas = json.loads(ruta.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
-        raise ErrorPlantilla(f"No se puede leer la plantilla de {ruta}: {error}") from error
+def _comprobar_formato(entradas, origen) -> None:
     if not isinstance(entradas, list) or any(
         not isinstance(entrada, dict)
         or not isinstance(entrada.get("nombre"), str)
@@ -66,9 +70,8 @@ def _leer(ruta: Path) -> list[dict]:
         for entrada in entradas
     ):
         raise ErrorPlantilla(
-            f"La plantilla de {ruta} debe ser una lista de objetos con nombre y posicion"
+            f"La plantilla de {origen} debe ser una lista de objetos con nombre y posicion"
         )
-    return entradas
 
 
 def clave_nombre(nombre: str) -> str:

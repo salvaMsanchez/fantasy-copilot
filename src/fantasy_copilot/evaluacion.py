@@ -24,6 +24,9 @@ MAXIMO_TOKENS_JUEZ = 4096
 PREGUNTA_INSIGHT = "¿Por qué recomienda el analista {accion} a {jugador}?"
 
 
+CONJUNTOS = ("nombres", "extraccion", "recomendacion")
+
+
 class ErrorConjunto(Exception):
     pass
 
@@ -35,7 +38,7 @@ class ErrorJornadaSinIngerir(Exception):
 def evaluar_nombres(
     *, datos_dir: Path, jugadores_de: Callable[[int], list[dict]], modelo: str, cliente
 ) -> dict:
-    fichero = Path(datos_dir) / "evaluacion" / "nombres.json"
+    fichero = fichero_conjunto(datos_dir, "nombres")
     temporada, conjunto = _leer_conjunto(fichero)
     jugadores = jugadores_de(temporada)
     ids_oficiales = {jugador["id"] for jugador in jugadores}
@@ -79,7 +82,7 @@ def evaluar_nombres(
 
 
 def evaluar_extraccion(*, datos_dir: Path, modelo: str, cliente, esperar=time.sleep) -> dict:
-    fichero = Path(datos_dir) / "evaluacion" / "extraccion.json"
+    fichero = fichero_conjunto(datos_dir, "extraccion")
     textos = _leer_conjunto_extraccion(fichero)
 
     detalle = []
@@ -198,6 +201,7 @@ def evaluar_once(
     modelo: str,
     cliente,
     esperar=time.sleep,
+    recomendacion: dict | None = None,
 ) -> dict:
     if not _formaciones_posibles(plantilla):
         raise ErrorPlantilla(
@@ -210,15 +214,17 @@ def evaluar_once(
             f"No hay puntos guardados de la jornada {jornada} de la temporada {temporada}"
         )
 
-    once = recomendar_once(
-        plantilla,
-        jornada=jornada,
-        temporada=temporada,
-        indice=indice,
-        modelo=modelo,
-        cliente=cliente,
-        esperar=esperar,
-    )["recomendacion"]["once_recomendado"]
+    if recomendacion is None:
+        recomendacion = recomendar_once(
+            plantilla,
+            jornada=jornada,
+            temporada=temporada,
+            indice=indice,
+            modelo=modelo,
+            cliente=cliente,
+            esperar=esperar,
+        )
+    once = recomendacion["recomendacion"]["once_recomendado"]
     nombres = [jugador["jugador"] for jugador in once]
     por_nombre = {jugador["nombre"]: jugador["jugador_id"] for jugador in plantilla}
     elegidos = [por_nombre[nombre] for nombre in dict.fromkeys(nombres) if nombre in por_nombre]
@@ -459,6 +465,40 @@ def _leer_conjunto_extraccion(fichero: Path) -> list[dict]:
                 "una lista de insights con `jugador` y `accion` (alinear o evitar)"
             )
     return textos
+
+
+def fichero_conjunto(datos_dir: Path, conjunto: str) -> Path:
+    return Path(datos_dir) / "evaluacion" / f"{conjunto}.json"
+
+
+def leer_conjunto(datos_dir: Path, conjunto: str):
+    """Lee y valida un conjunto etiquetado; lanza ErrorConjunto si está dañado."""
+    fichero = fichero_conjunto(datos_dir, conjunto)
+    if conjunto == "nombres":
+        return _leer_conjunto(fichero)[1]
+    if conjunto == "extraccion":
+        return _leer_conjunto_extraccion(fichero)
+    return _leer_conjunto_recomendacion(fichero)
+
+
+def _leer_conjunto_recomendacion(fichero: Path) -> list[dict]:
+    contenido = _leer_json(fichero)
+    casos = contenido.get("casos") if isinstance(contenido, dict) else None
+    if not isinstance(casos, list):
+        raise ErrorConjunto(f"Al conjunto {fichero} le falta la lista de casos")
+    for posicion, caso in enumerate(casos, start=1):
+        if (
+            not isinstance(caso, dict)
+            or not isinstance(caso.get("temporada"), int)
+            or not isinstance(caso.get("jornada"), int)
+            or caso["jornada"] < 1
+            or not isinstance(caso.get("plantilla"), list)
+        ):
+            raise ErrorConjunto(
+                f"El caso {posicion} del conjunto {fichero} necesita `temporada`, "
+                "`jornada` y `plantilla`"
+            )
+    return casos
 
 
 def _leer_conjunto(fichero: Path) -> tuple[int, list[dict]]:
