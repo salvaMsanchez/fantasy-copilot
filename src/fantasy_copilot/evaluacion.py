@@ -11,7 +11,7 @@ from openai import OpenAIError
 
 from fantasy_copilot.agente import PREGUNTA, TAMANO_ONCE, TOP_K, recomendar_once
 from fantasy_copilot.indice import identificador
-from fantasy_copilot.insights import ACCIONES, extraer_insights
+from fantasy_copilot.insights import ACCIONES, CRITERIOS, extraer_insights
 from fantasy_copilot.normalizacion import resolver_nombre
 from fantasy_copilot.plantilla import POSICIONES, ErrorPlantilla, clave_nombre
 from fantasy_copilot.puntos import ErrorPuntos
@@ -21,6 +21,7 @@ CAMPOS_TEXTO = (*CAMPOS_VIDEO, "chunk", "texto")
 # Jugadores por posición, en el orden de POSICIONES.
 FORMACIONES = ((1, 4, 3, 3), (1, 4, 4, 2))
 MAXIMO_TOKENS_JUEZ = 4096
+PREGUNTA_INSIGHT = "¿Por qué recomienda el analista {accion} a {jugador}?"
 
 
 class ErrorConjunto(Exception):
@@ -82,6 +83,7 @@ def evaluar_extraccion(*, datos_dir: Path, modelo: str, cliente, esperar=time.sl
     textos = _leer_conjunto_extraccion(fichero)
 
     detalle = []
+    extraidos_con_texto = []
     # Cada texto se extrae en su propia carpeta temporal: así se ignora lo ya procesado en
     # la jornada y no se escribe nada en ella.
     with tempfile.TemporaryDirectory() as temporal:
@@ -96,6 +98,9 @@ def evaluar_extraccion(*, datos_dir: Path, modelo: str, cliente, esperar=time.sl
                 cliente=cliente,
                 esperar=esperar,
             )
+            extraidos_con_texto += [
+                {"insight": extraido, "texto": texto["texto"]} for extraido in resultado["insights"]
+            ]
             esperados = _recuento_insights(texto["insights_esperados"])
             extraidos = _recuento_insights(resultado["insights"])
             correctos = sum((esperados & extraidos).values())
@@ -121,6 +126,7 @@ def evaluar_extraccion(*, datos_dir: Path, modelo: str, cliente, esperar=time.sl
         "precision": _fraccion(correctos, correctos + inventados),
         "cobertura": _fraccion(correctos, correctos + omitidos),
         "textos": detalle,
+        "insights": extraidos_con_texto,
     }
 
 
@@ -310,39 +316,77 @@ async def _juzgar_resumenes(resumenes: list[dict], contextos: list[list[dict]], 
     metrica = Faithfulness(llm=anotador)
     jugadores = []
     for resumen, contexto in zip(resumenes, contextos, strict=True):
-        detalle = {
-            "jugador": resumen["jugador"],
-            "resumen": resumen["resumen"],
-            "fidelidad": None,
-            "no_respaldadas": [],
-            "estado": "juzgado",
-            "error": None,
-        }
+        detalle = {"jugador": resumen["jugador"], "resumen": resumen["resumen"]}
         jugadores.append(detalle)
         if not contexto or not resumen["resumen"]:
-            detalle["estado"] = "sin_datos"
+            detalle.update(fidelidad=None, no_respaldadas=[], estado="sin_datos", error=None)
             continue
-        anotador.veredictos = None
-        try:
-            resultado = await metrica.ascore(
-                user_input=PREGUNTA.format(nombre=resumen["jugador"]),
-                response=resumen["resumen"],
-                retrieved_contexts=[json.dumps(i, ensure_ascii=False) for i in contexto],
-            )
-        # El juez pasa por instructor y OpenAI, que lanzan excepciones de varios tipos.
-        except Exception as error:
-            detalle["estado"] = "error"
-            detalle["error"] = f"{type(error).__name__}: {error}"
-            continue
-        if not math.isnan(resultado.value):
-            detalle["fidelidad"] = resultado.value
-        if anotador.veredictos is not None:
-            detalle["no_respaldadas"] = [
-                {"afirmacion": veredicto.statement, "motivo": veredicto.reason}
-                for veredicto in anotador.veredictos.statements
-                if not veredicto.verdict
-            ]
+        await _juzgar(
+            metrica,
+            anotador,
+            detalle,
+            pregunta=PREGUNTA.format(nombre=resumen["jugador"]),
+            respuesta=resumen["resumen"],
+            contextos=[json.dumps(i, ensure_ascii=False) for i in contexto],
+        )
     return jugadores
+
+
+def evaluar_fidelidad_insights(extraccion: dict, *, juez) -> dict:
+    insights = asyncio.run(_juzgar_insights(extraccion["insights"], juez))
+    return {"media": _media(insight["fidelidad"] for insight in insights), "insights": insights}
+
+
+async def _juzgar_insights(extraidos: list[dict], juez) -> list:
+    from ragas.metrics.collections import Faithfulness
+
+    anotador = _juez_que_anota(juez)
+    metrica = Faithfulness(llm=anotador)
+    insights = []
+    for extraido in extraidos:
+        insight = extraido["insight"]
+        detalle = {
+            "video_id": insight["fuente"]["video_id"],
+            "chunk": insight["fuente"]["chunk"],
+            "jugador": insight["jugador"],
+        }
+        insights.append(detalle)
+        razonamiento = [insight["razon_corta"]] + [
+            insight["criterios"][criterio]
+            for criterio in CRITERIOS
+            if insight["criterios"].get(criterio)
+        ]
+        await _juzgar(
+            metrica,
+            anotador,
+            detalle,
+            pregunta=PREGUNTA_INSIGHT.format(accion=insight["accion"], jugador=insight["jugador"]),
+            respuesta="\n".join(razonamiento),
+            contextos=[extraido["texto"]],
+        )
+    return insights
+
+
+async def _juzgar(metrica, anotador, detalle: dict, *, pregunta, respuesta, contextos) -> None:
+    detalle.update(fidelidad=None, no_respaldadas=[], estado="juzgado", error=None)
+    anotador.veredictos = None
+    try:
+        resultado = await metrica.ascore(
+            user_input=pregunta, response=respuesta, retrieved_contexts=contextos
+        )
+    # El juez pasa por instructor y OpenAI, que lanzan excepciones de varios tipos.
+    except Exception as error:
+        detalle["estado"] = "error"
+        detalle["error"] = f"{type(error).__name__}: {error}"
+        return
+    if not math.isnan(resultado.value):
+        detalle["fidelidad"] = resultado.value
+    if anotador.veredictos is not None:
+        detalle["no_respaldadas"] = [
+            {"afirmacion": veredicto.statement, "motivo": veredicto.reason}
+            for veredicto in anotador.veredictos.statements
+            if not veredicto.verdict
+        ]
 
 
 def _juez_que_anota(juez):
