@@ -103,14 +103,32 @@ def _respuesta(contenido):
     return SimpleNamespace(choices=[SimpleNamespace(message=mensaje, finish_reason="stop")])
 
 
-RESUMENES = {"Pedri": RESUMEN_PEDRI, "Raphinha": RESUMEN_RAPHINHA}
+RESUMEN_OBLAK = "Los insights hablan de otros porteros y no se puede decidir sobre Oblak"
+RESUMENES = {"Pedri": RESUMEN_PEDRI, "Raphinha": RESUMEN_RAPHINHA, "Jan Oblak": RESUMEN_OBLAK}
+
+# Insights de Oblak que no permiten decidir: el modelo responde sin_datos aunque los reciba.
+INSIGHTS_OBLAK = [
+    insight("Jan Oblak", "Courtois para un penalti en el ultimo minuto segun carrasco"),
+    insight("Jan Oblak", "Ter Stegen vuelve a entrenar con el grupo segun jornadaperfecta"),
+]
+
+# Si el resumen de Oblak se juzgara, el juez le daría 1 de 2 afirmaciones respaldadas.
+VEREDICTOS_CON_OBLAK = {
+    **VEREDICTOS,
+    RESUMEN_OBLAK: [
+        ("Los insights hablan de otros porteros", 1, "Hablan de Courtois y Ter Stegen"),
+        ("No se puede decidir sobre Oblak", 0, "Los insights recomiendan alinear"),
+    ],
+}
 
 
 class OpenAIRecomendacion:
     """Hace de cliente de OpenAI de la recomendación: una petición que nombra a un solo jugador
-    es su resumen; si nombra a más, es la del once."""
+    es su resumen; si nombra a más, es la del once. `acciones` fija la `accion_recomendada` de
+    cada jugador; por defecto, `alinear`."""
 
-    def __init__(self):
+    def __init__(self, acciones=None):
+        self.acciones = acciones or {}
         self.peticiones = 0
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._crear))
 
@@ -124,7 +142,7 @@ class OpenAIRecomendacion:
                 {
                     "jugador": nombre,
                     "posicion": POSICION[nombre],
-                    "accion_recomendada": "alinear",
+                    "accion_recomendada": self.acciones.get(nombre, "alinear"),
                     "confianza_media": 0.8,
                     "resumen": RESUMENES[nombre],
                     "fuentes": ["carrasco - Jornada 8"],
@@ -197,14 +215,14 @@ class JuezFalso(InstructorBaseRagasLLM):
         ]
 
 
-def recomendar(insights=INSIGHTS):
+def recomendar(insights=INSIGHTS, acciones=None):
     return recomendar_once(
         PLANTILLA,
         jornada=JORNADA,
         temporada=TEMPORADA,
         indice=IndiceFalso(insights),
         modelo="modelo-de-prueba",
-        cliente=OpenAIRecomendacion(),
+        cliente=OpenAIRecomendacion(acciones),
         esperar=lambda segundos: None,
     )
 
@@ -302,3 +320,47 @@ def test_si_el_juez_falla_para_un_jugador_los_demas_se_juzgan_y_solo_ellos_hacen
     juez = JuezFalso(fallos={RESUMEN_PEDRI: openai.OpenAIError("fallo de conexión")})
 
     assert evaluar(juez=juez)["media"] == pytest.approx(1.0)
+
+
+def evaluar_con_oblak_sin_datos(juez):
+    """Oblak recibe 2 insights, pero su resumen llega con `sin_datos`."""
+    recomendacion = recomendar([*INSIGHTS, *INSIGHTS_OBLAK], acciones={"Jan Oblak": "sin_datos"})
+    return evaluar_fidelidad(recomendacion, juez=juez)
+
+
+def test_un_resumen_evitar_se_juzga_como_los_demas():
+    juez = JuezFalso(
+        veredictos={
+            **VEREDICTOS,
+            RESUMEN_RAPHINHA: [
+                ("Raphinha encadena tres partidos", 1, "Lo dice el insight"),
+                ("Raphinha esta lesionado", 0, "Ningun insight habla de lesion"),
+            ],
+        }
+    )
+    recomendacion = recomendar(acciones={"Raphinha": "evitar"})
+
+    raphinha = detalle_de(evaluar_fidelidad(recomendacion, juez=juez), "Raphinha")
+
+    assert raphinha["fidelidad"] == pytest.approx(0.5)
+
+
+def test_un_resumen_sin_datos_con_insights_recibidos_no_se_juzga():
+    resultado = evaluar_con_oblak_sin_datos(JuezFalso(veredictos=VEREDICTOS_CON_OBLAK))
+
+    oblak = detalle_de(resultado, "Jan Oblak")
+    assert (oblak["estado"], oblak["fidelidad"], oblak["no_respaldadas"]) == ("sin_datos", None, [])
+
+
+def test_un_resumen_sin_datos_con_insights_recibidos_queda_fuera_de_la_media():
+    resultado = evaluar_con_oblak_sin_datos(JuezFalso(veredictos=VEREDICTOS_CON_OBLAK))
+
+    assert resultado["media"] == pytest.approx(0.875)
+
+
+def test_el_juez_no_recibe_peticiones_por_un_resumen_sin_datos_con_insights_recibidos():
+    juez = JuezFalso(veredictos=VEREDICTOS_CON_OBLAK)
+
+    evaluar_con_oblak_sin_datos(juez)
+
+    assert len(juez.peticiones) == 4
