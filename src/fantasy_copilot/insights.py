@@ -13,7 +13,7 @@ MAXIMO_TOKENS_RESPUESTA = 6000
 TEMPERATURA = 0.1
 
 _TEXTO_O_NULO = {"type": ["string", "null"]}
-_CRITERIOS = ("forma_actual", "dinamica_equipo", "calendario_rival", "prediccion_puntos")
+CRITERIOS = ("forma_actual", "dinamica_equipo", "calendario_rival", "prediccion_puntos")
 
 ESQUEMA_INSIGHTS = {
     "type": "json_schema",
@@ -34,8 +34,8 @@ ESQUEMA_INSIGHTS = {
                             "razon_corta": {"type": "string"},
                             "criterios": {
                                 "type": "object",
-                                "properties": {criterio: _TEXTO_O_NULO for criterio in _CRITERIOS},
-                                "required": list(_CRITERIOS),
+                                "properties": {criterio: _TEXTO_O_NULO for criterio in CRITERIOS},
+                                "required": list(CRITERIOS),
                                 "additionalProperties": False,
                             },
                             "quote_original": _TEXTO_O_NULO,
