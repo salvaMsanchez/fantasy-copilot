@@ -941,3 +941,79 @@ def test_un_conjunto_de_nombres_o_recomendacion_danado_no_hace_ninguna_peticion_
     evaluar(capsys, con=con)
 
     assert cliente.peticiones == 0
+
+
+# --- Un caso con puntos provisionales -----------------------------------------------------------
+# La jornada 3 acabó el 20 de octubre a las 21:00 y se evalúa el 21 a las 12:00 (`AHORA`): sus
+# puntos aún son provisionales.
+
+
+def preparar_jornada_3_provisional(datos):
+    preparar(datos, casos=(2, 3))
+    (datos / str(TEMPORADA) / "j03" / "puntos.json").unlink()
+    provisional = pagina_puntos(3).replace(
+        "Lunes, 12 de octubre del 2026", "Martes, 20 de octubre del 2026"
+    )
+    return WebFalsa({url_puntos(3): provisional})
+
+
+def test_un_caso_con_puntos_provisionales_no_impide_evaluar_los_demas(capsys, datos):
+    web = preparar_jornada_3_provisional(datos)
+
+    resultado = evaluar(capsys, con=servicios(futbolfantasy=web))
+
+    assert resultado.codigo == 0, resultado.errores
+    filas = [
+        linea
+        for linea in informe(datos).splitlines()
+        if all(muestra_entero(linea, cifra) for cifra in CIFRAS_DEL_CASO[2])
+    ]
+    assert filas, informe(datos)
+
+
+def test_un_caso_con_puntos_provisionales_avisa_de_que_se_salta_por_ser_provisionales(
+    capsys, datos
+):
+    web = preparar_jornada_3_provisional(datos)
+
+    resultado = evaluar(capsys, con=servicios(futbolfantasy=web))
+
+    avisos = [
+        linea
+        for linea in (resultado.salida + resultado.errores).splitlines()
+        if "provisional" in linea.lower() and muestra_entero(linea, 3)
+    ]
+    assert avisos, resultado.salida + resultado.errores
+
+
+def test_un_caso_con_puntos_provisionales_sale_en_el_informe_como_no_evaluado(capsys, datos):
+    web = preparar_jornada_3_provisional(datos)
+
+    evaluar(capsys, con=servicios(futbolfantasy=web))
+
+    no_evaluado = re.compile(r"provisional|sin evaluar|no evaluad|saltad", re.IGNORECASE)
+    encabezado, saltados = "", []
+    for linea in informe(datos).splitlines():
+        if re.match(r"\s*#+\s", linea):
+            encabezado = linea
+        elif muestra_entero(linea, 3) and muestra_entero(linea, TEMPORADA):
+            if no_evaluado.search(linea) or no_evaluado.search(encabezado):
+                saltados.append(linea)
+    assert saltados, informe(datos)
+
+
+def test_un_caso_con_puntos_provisionales_no_pide_la_recomendacion_del_once(capsys, datos):
+    web = preparar_jornada_3_provisional(datos)
+    cliente = OpenAIFalso()
+
+    evaluar(capsys, con=servicios(cliente=cliente, futbolfantasy=web))
+
+    assert cliente.onces == 1
+
+
+def test_los_puntos_provisionales_de_la_jornada_no_se_guardan(capsys, datos):
+    web = preparar_jornada_3_provisional(datos)
+
+    evaluar(capsys, con=servicios(futbolfantasy=web))
+
+    assert not (datos / str(TEMPORADA) / "j03" / "puntos.json").exists()
